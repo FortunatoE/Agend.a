@@ -2,17 +2,22 @@
 function wsExchangePanel(host,board){
  host.replaceChildren();
  const EC=AgendaExchange;
- const heading=node('h2','Importação e exportação'),intro=node('p','Transfira dados de planilhas CSV (inclusive do Excel) sem alterar a estrutura do quadro.','sub');host.append(heading,intro);
+ const heading=node('h2','Importação e exportação'),intro=node('p','Transfira dados de planilhas XLSX, CSV e TSV sem alterar a estrutura do quadro.','sub');host.append(heading,intro);
  const call=payload=>api('/api/workspaces',{method:'POST',body:JSON.stringify({action:'exchange',board_id:board.id,...payload})});
  const download=wsButton('Exportar CSV',async()=>{download.disabled=true;try{
  const result=await call({mode:'export'});
  const blob=new Blob([result.csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
  a.href=url;a.download=(board.name.replace(/[^a-zA-Z0-9À-ÿ_-]+/g,'_')||'quadro')+'.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);toast(result.count+' registros exportados.');
  }catch(e){toast(e.message)}finally{download.disabled=false}},'primary');
- host.append(download);
+ const xlsx=wsButton('Exportar Excel (.xlsx)',async()=>{xlsx.disabled=true;try{
+ const result=await call({mode:'export',format:'xlsx'});const bytes=Uint8Array.from(atob(result.xlsx),c=>c.charCodeAt(0));
+ const url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),a=document.createElement('a');
+ a.href=url;a.download=(board.name.replace(/[^a-zA-Z0-9À-ÿ_-]+/g,'_')||'quadro')+'.xlsx';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);toast(result.count+' registros exportados.');
+ }catch(e){toast(e.message)}finally{xlsx.disabled=false}},'primary');
+ host.append(download,xlsx);
  if(wsCan('create',board.id)){
- const panel=node('div',undefined,'panel'),form=node('div',undefined,'form');panel.append(node('h3','Importar registros'),node('p','Até 200 registros por lote, 500 mil caracteres. A primeira linha deve conter os cabeçalhos. A importação cria novos registros e dispara regras de criação.','sub'),form);host.append(panel);
- const file=node('input');file.type='file';file.accept='.csv,.tsv,text/csv,text/tab-separated-values';file.setAttribute('aria-label','Selecionar arquivo CSV');form.append(file);
+ const panel=node('div',undefined,'panel'),form=node('div',undefined,'form');panel.append(node('h3','Importar registros'),node('p','Até 200 registros por lote, 500 mil caracteres. A primeira linha deve conter os cabeçalhos. XLSX: primeira aba, até 1,5 MB, sem fórmulas; cole valores antes de importar. A importação cria novos registros e dispara regras de criação.','sub'),form);host.append(panel);
+ const file=node('input');file.type='file';file.accept='.xlsx,.csv,.tsv,text/csv,text/tab-separated-values';file.setAttribute('aria-label','Selecionar arquivo de planilha');form.append(file);
  const delimiter=wsSelectOptions('Separador',[[';','Ponto e vírgula (Excel Brasil)'],[',','Vírgula'],['\t','Tabulação']]);form.append(delimiter.wrap);
  const group=wsSelectOptions('Grupo de destino',[['','Sem grupo'],...(wsState.groups||[]).filter(g=>g.board_id===board.id).map(g=>[g.id,g.name])]);group.sel.required=false;form.append(group.wrap);
  const mappingHost=node('div',undefined,'form'),previewHost=node('div'),status=node('p','','sub');form.append(status,mappingHost,previewHost);
@@ -45,7 +50,13 @@ function wsExchangePanel(host,board){
  readMapping=()=>({title:Number(title.sel.value),fields:mapped.filter(m=>m.sel.value!=='').map(m=>({field_id:m.f.id,column:Number(m.sel.value)}))});preview.disabled=false;
  }catch(e){status.textContent=e.message}}
  file.onchange=async()=>{const version=++revision;raw='';readMapping=null;invalidate();mappingHost.replaceChildren();const selected=file.files[0];if(!selected)return;if(selected.size>2000000){status.textContent='Arquivo muito grande.';return}const readVersion=revision;
- try{const value=await selected.text();if(readVersion!==revision)return;raw=value;configure()}catch(e){status.textContent=e.message}};
+ try{let value;if(/\.xlsx$/i.test(selected.name)){
+ if(selected.size>1500000)throw Error('XLSX acima de 1,5 MB.');
+ status.textContent='Lendo planilha Excel…';const bytes=new Uint8Array(await selected.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+ value=(await call({mode:'decode_xlsx',xlsx:btoa(binary)})).csv;
+ if(readVersion!==revision)return;delimiter.sel.value=';';
+ }else value=await selected.text();
+ if(readVersion!==revision)return;raw=value;configure()}catch(e){if(readVersion===revision)status.textContent=e.message}};
  delimiter.sel.onchange=configure;group.sel.onchange=invalidate;
  const controls=node('div',undefined,'actions');controls.append(preview,commit);form.append(controls);
  }
