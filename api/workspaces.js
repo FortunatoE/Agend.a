@@ -1,4 +1,4 @@
-const {session,body,allowed,unauth,forbidden}=require('./_core');
+const {database,session,body,allowed,unauth,forbidden}=require('./_core');
 const {computeItems,validateConfig}=require('../lib/work-calculations');
 const {ensureAutomations}=require('../lib/work-automation-db');
 const {normalizeRule}=require('../lib/work-automation-rules');
@@ -10,11 +10,14 @@ const {ensureGovernance,getBoardRole,roleNumber}=require('../lib/work-governance
 const {canBoard,redactRestrictedFields}=require('../lib/work-access');
 const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const exchange=require('../dist/exchange-core');
+const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
 module.exports=async(req,res)=>{
  try{
+ res.setHeader('Cache-Control','no-store');
+ if(req.headers.authorization!==undefined)return await externalApi(database(),req,res,body);
  const {sql,user}=await session(req);if(!user)return unauth(res);
  await sql.query("CREATE TABLE IF NOT EXISTS workspaces (id SERIAL PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW())");
  await sql.query("CREATE TABLE IF NOT EXISTS work_boards (id SERIAL PRIMARY KEY,workspace_id INTEGER NOT NULL REFERENCES workspaces(id),name TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())");
@@ -39,6 +42,7 @@ module.exports=async(req,res)=>{
  await ensureWorkflows(sql);
  await ensureForms(sql);
  await ensureExchange(sql);
+ await ensureApiKeys(sql);
  if(req.method==='GET'){
  let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
@@ -56,6 +60,7 @@ module.exports=async(req,res)=>{
  }
  const d=body(req);const action=d.action;
  const permitted=async(bid,verb)=>canBoard(user,await getBoardRole(sql,user,bid),verb);
+ if(action==='api_keys')return await manageKeys(sql,user,d,req.method,res);
  if(action==='exchange'){
  if(req.method!=='POST')return res.status(405).end();
  const bid=id(d.board_id);
