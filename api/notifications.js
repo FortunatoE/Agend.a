@@ -5,7 +5,7 @@ module.exports = async (req,res) => {
     const {sql,user}=await session(req); if(!user) return unauth(res);
     if(req.method==='GET') {
       await syncOverdueNotifications(sql,user);
-      const notifications=await sql.query('SELECT * FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50',[user.id]);
+      const notifications=await sql.query('SELECT n.* FROM notifications n WHERE n.user_id=$1 AND (n.task_id IS NULL OR $2::boolean OR EXISTS(SELECT 1 FROM tasks t WHERE t.id=n.task_id AND t.assignee_id=$1)) ORDER BY n.created_at DESC LIMIT 50',[user.id,Boolean(user.is_admin)]);
       return res.status(200).json({notifications,unread:notifications.filter(item=>!item.read_at).length});
     }
     if(req.method==='PATCH') {
