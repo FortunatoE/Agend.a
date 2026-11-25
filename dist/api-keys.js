@@ -24,4 +24,5 @@ async function wsApiKeysPanel(host,board){
  panel.append(node('h3','Guarde a chave agora'),node('p','Ela não poderá ser recuperada depois. Armazene em um gerenciador de segredos; não inclua em código público.','sub'),value,wsButton('Copiar chave',async()=>{try{await navigator.clipboard.writeText(value.value);toast('Chave copiada.')}catch{value.select()}}),wsButton('Ocultar chave',()=>{value.value='';secret.replaceChildren()}));secret.append(panel);name.value='';await refresh();
  }catch(e){toast(e.message)}finally{save.disabled=false}};
  await refresh();
+ await wsWebhooksPanel(host,board);
 }
