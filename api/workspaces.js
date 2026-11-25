@@ -11,6 +11,7 @@ const {canBoard,redactRestrictedFields}=require('../lib/work-access');
 const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const exchange=require('../dist/exchange-core');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
+const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -43,6 +44,8 @@ module.exports=async(req,res)=>{
  await ensureForms(sql);
  await ensureExchange(sql);
  await ensureApiKeys(sql);
+ await ensureSync(sql);
+ await ensureEvents(sql);
  if(req.method==='GET'){
  let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
