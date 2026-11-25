@@ -1,0 +1,13 @@
+'use strict';
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const {normalizeForm,validateResponse}=require('../lib/work-form-rules');
+const fields=[{id:1,board_id:1,type:'text',name:'Descrição'},{id:2,board_id:1,type:'number',name:'Quantidade'},{id:3,board_id:1,type:'checkbox',name:'Validado'},{id:4,board_id:1,type:'date',name:'Prazo'},{id:5,board_id:1,type:'formula',name:'Total'},{id:6,board_id:2,type:'text',name:'Outro'},{id:7,board_id:1,type:'status',name:'Status'}];
+const groups=[{id:1,board_id:1},{id:2,board_id:2}];
+const config={name:' Solicitação ',description:'Teste',group_id:1,fields:[{field_id:1,required:true},{field_id:2,required:true},{field_id:3,required:true},{field_id:4,required:false},{field_id:7,required:false}]};
+const form={board_id:1,...normalizeForm(config,1,fields,groups)};
+const data={title:' Pedido ',answers:{1:'  Teste ',2:0,3:false,4:'2028-02-29',7:'A fazer'}};
+test('normalizes form and preserves zero and false as valid required answers',()=>{assert.equal(form.name,'Solicitação');assert.deepEqual(validateResponse(form,data,fields),{title:'Pedido',values:{1:'Teste',2:0,3:false,4:'2028-02-29',7:'A fazer'}})});
+test('rejects unknown, duplicated and computed fields and groups from another board',()=>{for(const id of [5,6,99])assert.throws(()=>normalizeForm({...config,fields:[{field_id:id,required:false}]},1,fields,groups));assert.throws(()=>normalizeForm({...config,fields:[config.fields[0],config.fields[0]]},1,fields,groups));assert.throws(()=>normalizeForm({...config,group_id:2},1,fields,groups))});
+test('rejects missing required answers, wrong types, invalid dates and extraneous fields',()=>{for(const answers of [{...data.answers,1:' '},{...data.answers,2:'0'},{...data.answers,3:null},{...data.answers,4:'2027-02-29'},{...data.answers,7:'Outro'},{...data.answers,5:10}])assert.throws(()=>validateResponse(form,{...data,answers},fields))});
+test('supports optional blanks and rejects outdated schemas',()=>{assert.deepEqual(validateResponse(form,{title:'Pedido',answers:{1:'Teste',2:0,3:false,4:null}},fields).values,{1:'Teste',2:0,3:false});assert.throws(()=>validateResponse(form,data,fields.filter(f=>f.id!==4)))});
