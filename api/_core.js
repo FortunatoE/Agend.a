@@ -47,13 +47,19 @@ async function bootstrap(sql) {
     token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
-  await sql`CREATE TABLE IF NOT EXISTS notifications (
-    id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
-    task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, type TEXT NOT NULL,
-    title TEXT NOT NULL, message TEXT NOT NULL, read_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`;
-  await sql`CREATE UNIQUE INDEX IF NOT EXISTS notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'`;
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, type TEXT NOT NULL,
+      title TEXT NOT NULL, message TEXT NOT NULL, read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
+  } catch (error) {
+    const existing = await sql.query("SELECT to_regclass('public.notifications') AS name");
+    if (!['23505','42P07'].includes(error.code) || !existing[0]?.name) throw error;
+  }
+  try { await sql`CREATE UNIQUE INDEX IF NOT EXISTS notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'`; }
+  catch (error) { if (!['23505','42P07'].includes(error.code)) throw error; }
   await sql`CREATE TABLE IF NOT EXISTS task_activity (
     id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL, detail TEXT NOT NULL,
