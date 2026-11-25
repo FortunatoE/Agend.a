@@ -10,6 +10,7 @@ const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-db');
+const {ensureTaskOwnership,findTask,resolveAssignee}=require('../lib/task-ownership');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -31,6 +32,22 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  INSERT INTO work_boards(workspace_id,name) VALUES(1,'Quadro');
  INSERT INTO work_fields(board_id,name,type) VALUES(1,'Status','status');
  INSERT INTO work_groups(board_id,name) VALUES(1,'Finalizados');`);
+ // Exercise ownership migration against duplicate and unmatched legacy names.
+ await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE); INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
+ await ensureTaskOwnership(sql);await ensureTaskOwnership(sql);
+ const adminUser={id:1,name:'Admin',is_admin:true},editorUser={id:2,name:'Editor',is_admin:false},readerUser={id:3,name:'Leitor',is_admin:false};
+ assert.equal((await findTask(sql,editorUser,1)).assignee_id,2);
+ assert.equal(await findTask(sql,editorUser,2),null);
+ assert.equal(await findTask(sql,readerUser,1),null);
+ assert.equal((await findTask(sql,adminUser,3)).assignee_id,null);
+ assert.equal((await findTask(sql,adminUser,4)).assignee_id,null);
+ assert.deepEqual(await resolveAssignee(sql,editorUser,{}),{id:2,name:'Editor'});
+ assert.equal(await resolveAssignee(sql,editorUser,{assignee_id:3}),null);
+ assert.equal(await resolveAssignee(sql,adminUser,{assignee:'Duplicado'}),null);
+ assert.deepEqual(await resolveAssignee(sql,adminUser,{assignee_id:3}),{id:3,name:'Leitor'});
+ await sql.query('UPDATE tasks SET assignee_id=3,assignee=$1 WHERE id=1',['Leitor']);
+ assert.equal(await findTask(sql,editorUser,1),null);
+ assert.equal((await findTask(sql,readerUser,1)).id,1);
  await ensureGovernance(sql);await ensureAutomations(sql);await ensureWorkflows(sql);await ensureForms(sql);await ensureExchange(sql);
  await sql.query("UPDATE workspaces SET restricted=true; UPDATE work_boards SET restricted=true; INSERT INTO work_workspace_members VALUES(1,2,'editor'),(1,3,'viewer'); INSERT INTO work_board_members VALUES(1,2,'editor'),(1,3,'manager')");
  assert.equal((await sql.query('SELECT work_board_role(2,1) AS r'))[0].r,2);
