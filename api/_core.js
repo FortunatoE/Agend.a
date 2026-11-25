@@ -35,6 +35,7 @@ async function bootstrap(sql) {
     progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  await sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS generated_from INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL`;
   await sql`CREATE TABLE IF NOT EXISTS app_users (
     id SERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
     password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
