@@ -9,9 +9,13 @@ module.exports=async(req,res)=>{
  await sql.query("CREATE TABLE IF NOT EXISTS work_boards (id SERIAL PRIMARY KEY,workspace_id INTEGER NOT NULL REFERENCES workspaces(id),name TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())");
  await sql.query("CREATE TABLE IF NOT EXISTS work_fields (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,type TEXT NOT NULL CHECK(type IN ('text','number','date','checkbox','status')),UNIQUE(board_id,name))");
  await sql.query("CREATE TABLE IF NOT EXISTS work_items (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,title TEXT NOT NULL,values JSONB NOT NULL DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW())");
+ await sql.query("CREATE TABLE IF NOT EXISTS work_groups (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,UNIQUE(board_id,name))");
+ await sql.query("ALTER TABLE work_items ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES work_groups(id) ON DELETE SET NULL");
+ await sql.query("CREATE INDEX IF NOT EXISTS work_items_board_idx ON work_items(board_id)");
+ await sql.query("CREATE INDEX IF NOT EXISTS work_groups_board_idx ON work_groups(board_id)");
  if(req.method==='GET'){
- const [workspaces,boards,fields,items]=await Promise.all(['workspaces','work_boards','work_fields','work_items'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
- return res.status(200).json({workspaces,boards,fields,items});
+ const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
+ return res.status(200).json({workspaces,boards,fields,items,groups});
  }
  const d=body(req);const action=d.action;
  if(req.method==='POST'){
@@ -22,6 +26,7 @@ module.exports=async(req,res)=>{
  if(action==='workspace') {if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO workspaces(name) VALUES($1) RETURNING *',[name]);}
  else if(action==='board') {if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO work_boards(workspace_id,name) VALUES($1,$2) RETURNING *',[id(d.workspace_id),name]);}
  else if(action==='field'){if(!user.is_admin)return forbidden(res);if(!types.has(d.type))return res.status(400).json({error:'Tipo inválido.'});rows=await sql.query('INSERT INTO work_fields(board_id,name,type) VALUES($1,$2,$3) RETURNING *',[id(d.board_id),name,d.type]);}
+ else if(action==='group'){if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO work_groups(board_id,name) VALUES($1,$2) RETURNING *',[id(d.board_id),name]);}
  else if(action==='item')rows=await sql.query('INSERT INTO work_items(board_id,title) VALUES($1,$2) RETURNING *',[id(d.board_id),name]);
  else return res.status(400).json({error:'Ação inválida.'});
  return res.status(201).json(rows[0]);
@@ -30,6 +35,11 @@ module.exports=async(req,res)=>{
  if(!allowed(user,'edit'))return forbidden(res);
  const item=(await sql.query('SELECT * FROM work_items WHERE id=$1',[id(d.id)]))[0];
  if(!item)return res.status(404).json({error:'Registro não encontrado.'});
+ if(action==='group_move'){
+ const group=d.group_id===null?null:id(d.group_id);
+ if(d.group_id!==null&&(!group||!(await sql.query('SELECT id FROM work_groups WHERE id=$1 AND board_id=$2',[group,item.board_id])).length))return res.status(400).json({error:'Grupo inválido para este quadro.'});
+ return res.status(200).json((await sql.query('UPDATE work_items SET group_id=$1 WHERE id=$2 RETURNING *',[group,item.id]))[0]);
+ }
  if(action==='rename'){const title=clean(d.name);if(!title)return res.status(400).json({error:'Informe um nome.'});return res.status(200).json((await sql.query('UPDATE work_items SET title=$1 WHERE id=$2 RETURNING *',[title,item.id]))[0]);}
  if(action!=='value')return res.status(400).json({error:'Ação inválida.'});
  const field=(await sql.query('SELECT * FROM work_fields WHERE id=$1 AND board_id=$2',[id(d.field_id),item.board_id]))[0];
