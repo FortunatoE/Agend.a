@@ -47,6 +47,13 @@ async function bootstrap(sql) {
     token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`;
+  await sql`CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+    task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, type TEXT NOT NULL,
+    title TEXT NOT NULL, message TEXT NOT NULL, read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'`;
   await sql`CREATE TABLE IF NOT EXISTS task_activity (
     id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL, detail TEXT NOT NULL,
@@ -83,6 +90,18 @@ async function session(req, sql = database()) {
 async function activity(sql, taskId, userId, detail) {
   await sql.query('INSERT INTO task_activity (task_id,user_id,detail) VALUES ($1,$2,$3)', [taskId,userId,detail]);
 }
+async function notify(sql, userId, taskId, type, title, message) {
+  if (!userId) return;
+  await sql.query('INSERT INTO notifications (user_id,task_id,type,title,message) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [userId,taskId||null,type,title,message]);
+}
+async function notifyAssignee(sql, task, actorId, type, title, message) {
+  const recipients = await sql.query('SELECT id FROM app_users WHERE active=true AND LOWER(name)=LOWER($1)', [task.assignee]);
+  await Promise.all(recipients.filter(recipient => recipient.id !== actorId).map(recipient => notify(sql,recipient.id,task.id,type,title,message)));
+}
+async function syncOverdueNotifications(sql, user) {
+  const tasks = await sql.query("SELECT id,title FROM tasks WHERE LOWER(assignee)=LOWER($1) AND due_date<CURRENT_DATE AND status<>'concluída'", [user.name]);
+  await Promise.all(tasks.map(task => notify(sql,user.id,task.id,'overdue','Atividade atrasada',`A atividade “${task.title}” está com o prazo vencido.`)));
+}
 function unauth(res) { return res.status(401).json({ error:'Faça login para continuar.' }); }
 function forbidden(res) { return res.status(403).json({ error:'Seu perfil não tem esta permissão.' }); }
-module.exports = { database, bootstrap, body, digest, passwordHash, verifyPassword, publicUser, session, allowed, activity, unauth, forbidden };
+module.exports = { database, bootstrap, body, digest, passwordHash, verifyPassword, publicUser, session, allowed, activity, notify, notifyAssignee, syncOverdueNotifications, unauth, forbidden };

@@ -1,4 +1,4 @@
-const { body, session, allowed, activity, unauth, forbidden } = require('./_core');
+const { body, session, allowed, activity, notifyAssignee, unauth, forbidden } = require('./_core');
 function nextDate(value, recurrence) {
   const [year,month,day] = String(value).slice(0,10).split('-').map(Number);
   if (recurrence === 'diária') return new Date(Date.UTC(year,month-1,day+1)).toISOString().slice(0,10);
@@ -18,7 +18,9 @@ module.exports = async (req,res) => {
       const {title,description='',area,assignee,due_date,priority='normal',recurrence='não se repete'}=data;
       if(!title||!area||!assignee||!due_date) return res.status(400).json({error:'Título, área, responsável e prazo são obrigatórios.'});
       const rows=await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[title,description,area,assignee,due_date,priority,recurrence]);
-      await activity(sql,rows[0].id,user.id,'Criou a atividade'); return res.status(201).json(rows[0]);
+      await activity(sql,rows[0].id,user.id,'Criou a atividade');
+      await notifyAssignee(sql,rows[0],user.id,'assigned','Nova atividade atribuída',`${user.name} atribuiu “${rows[0].title}” para você.`);
+      return res.status(201).json(rows[0]);
     }
     if(req.method==='PATCH') {
       if(!allowed(user,'edit')) return forbidden(res);
@@ -29,6 +31,8 @@ module.exports = async (req,res) => {
         title??current.title,description??current.description,area??current.area,assignee??current.assignee,due_date??current.due_date,priority??current.priority,recurrence??current.recurrence,nextStatus,nextProgress,id
       ]);
       const updated = rows[0];
+      if (updated.assignee !== current.assignee) await notifyAssignee(sql,updated,user.id,'assigned','Atividade atribuída a você',`${user.name} atribuiu “${updated.title}” para você.`);
+      else if (nextStatus !== current.status) await notifyAssignee(sql,updated,user.id,'status','Status atualizado',`A atividade “${updated.title}” avançou para ${nextStatus}.`);
       let generated = null;
       if (current.status !== 'concluída' && nextStatus === 'concluída' && updated.recurrence !== 'não se repete' && updated.due_date) {
         const nextDue = nextDate(updated.due_date, updated.recurrence);
