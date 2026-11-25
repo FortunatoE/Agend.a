@@ -12,7 +12,14 @@ module.exports = async (req,res) => {
     }
     if (req.method === 'PATCH') {
       if(!data.id) return res.status(400).json({error:'Usuário inválido.'});
-      await sql.query('UPDATE app_users SET is_admin=$1,can_create=$2,can_edit=$3,can_delete=$4,active=$5 WHERE id=$6',[!!data.is_admin,!!data.can_create,!!data.can_edit,!!data.can_delete,data.active!==false,data.id]);
+      if (data.password) {
+        if (String(data.password).length < 10) return res.status(400).json({error:'A senha temporária deve ter ao menos 10 caracteres.'});
+        const p=passwordHash(data.password);
+        await sql.query('UPDATE app_users SET is_admin=$1,can_create=$2,can_edit=$3,can_delete=$4,active=$5,password_salt=$6,password_hash=$7 WHERE id=$8',[!!data.is_admin,!!data.can_create,!!data.can_edit,!!data.can_delete,data.active!==false,p.salt,p.hash,data.id]);
+        await sql.query('DELETE FROM app_sessions WHERE user_id=$1',[data.id]);
+      } else {
+        await sql.query('UPDATE app_users SET is_admin=$1,can_create=$2,can_edit=$3,can_delete=$4,active=$5 WHERE id=$6',[!!data.is_admin,!!data.can_create,!!data.can_edit,!!data.can_delete,data.active!==false,data.id]);
+      }
       return res.status(200).json({ok:true});
     }
     res.setHeader('Allow','GET,POST,PATCH'); return res.status(405).end();
