@@ -44,3 +44,7 @@ Defina `DATABASE_URL` no ambiente. Em produção, a integração Neon da Vercel 
 ### Validação antes de publicar
 
 Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Automações configuráveis, relacionamentos, formulários e workflows ainda não implementados.
+
+### Evolução dos quadros
+
+Grupos persistentes por quadro, atribuição de registros a grupos validada no servidor, calendário por campo de data (lista de eventos agrupada por data), dashboard com contagem, conclusão, distribuição por status e soma de campos numéricos. Os dados existentes permanecem sem grupo até serem classificados. Testar também movimentação entre grupos e rejeição de grupo de outro quadro.
