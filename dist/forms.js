@@ -1,6 +1,6 @@
 /* Authenticated forms, bound to existing board fields. */
 function wsFormModal(def){
- if(!def?.enabled||!can('create'))return toast('Formulário indisponível para seu perfil.');
+ if(!def?.enabled||!wsCan('create',def.board_id))return toast('Formulário indisponível para seu perfil.');
  const modal=$('#modal'),dialog=node('div',undefined,'dialog'),form=node('form',undefined,'form'),readers=new Map();
  dialog.append(node('h2',def.name),node('p',def.description||'Preencha as informações abaixo.','sub'));
  const titleLabel=node('label','Título do registro *'),title=node('input');title.required=true;title.maxLength=120;titleLabel.append(title);form.append(titleLabel);
@@ -52,7 +52,7 @@ function wsFormsPanel(host,board){
  for(const f of definitions){
  const row=node('div',undefined,'comment');row.append(node('b',f.name+' · '+(f.enabled?'Ativo':'Pausado')),node('p',f.description||'Sem descrição','sub'));
  const controls=node('div',undefined,'actions');
- if(f.enabled&&can('create'))controls.append(wsButton('Responder',()=>wsFormModal(f),'primary'));
+ if(f.enabled&&wsCan('create',f.board_id))controls.append(wsButton('Responder',()=>wsFormModal(f),'primary'));
  if(f.enabled)controls.append(wsButton('Copiar link interno',async()=>{try{const url=new URL(location.pathname,location.origin);url.searchParams.set('form',f.id);await navigator.clipboard.writeText(url.href);toast('Link copiado. Requer login e permissão de criação.')}catch(e){toast('Não foi possível copiar o link.')}}));
  if(current?.is_admin)controls.append(wsButton(f.enabled?'Pausar':'Ativar',()=>wsWrite('PATCH',{action:'form',id:f.id,enabled:!f.enabled})));
  row.append(controls);list.append(row);
@@ -68,6 +68,6 @@ function wsOpenFormLink(){
  if(wsLinkHandled)return;wsLinkHandled=true;
  const id=Number(new URLSearchParams(location.search).get('form'));if(!Number.isSafeInteger(id)||id<=0)return;
  const form=(wsState.forms||[]).find(f=>f.id===id&&f.enabled),board=wsState.boards.find(b=>b.id===form?.board_id);
- if(!form||!board||!can('create'))return toast('Formulário indisponível para seu perfil.');
+ if(!form||!board||!wsCan('create',board.id))return toast('Formulário indisponível para seu perfil.');
  wsId=board.workspace_id;boardId=board.id;wsMode='forms';wsDraw();wsFormModal(form);
 }
