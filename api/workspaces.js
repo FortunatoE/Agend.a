@@ -8,7 +8,7 @@ const {ensureForms}=require('../lib/work-form-db');
 const {normalizeForm,validateResponse}=require('../lib/work-form-rules');
 const {ensureGovernance,getBoardRole,roleNumber}=require('../lib/work-governance-db');
 const {canBoard,redactRestrictedFields}=require('../lib/work-access');
-const {ensureExchange}=require('../lib/work-exchange-db');
+const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const exchange=require('../dist/exchange-core');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
@@ -89,13 +89,7 @@ module.exports=async(req,res)=>{
  const group=d.group_id==null?null:id(d.group_id);
  if(d.group_id!=null&&(!group||!(await sql.query('SELECT id FROM work_groups WHERE id=$1 AND board_id=$2',[group,bid])).length))return res.status(400).json({error:'Grupo inválido.'});
  const args=[bid,user.id,d.request_id,prepared.records.length,JSON.stringify(prepared.records),group];
- const result=await sql.query(`WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::int::text,true)),
- reserved AS (INSERT INTO work_import_runs(board_id,user_id,request_id,row_count)
- SELECT $1,$2,$3::uuid,$4 FROM actor WHERE work_board_role($2,$1)>=2
- ON CONFLICT(board_id,user_id,request_id) DO NOTHING RETURNING id,row_count),
- inserted AS (INSERT INTO work_items(board_id,group_id,title,values)
- SELECT $1,$6,r.title,r.values FROM reserved CROSS JOIN jsonb_to_recordset($5::jsonb) AS r(title text,values jsonb) RETURNING id)
- SELECT reserved.id,reserved.row_count,(SELECT count(*)::int FROM inserted) AS inserted FROM reserved`,args);
+ const result=await insertBatch(sql,args);
  if(result.length)return res.status(201).json(result[0]);
  if(!await permitted(bid,'create'))return forbidden(res);
  const old=await sql.query('SELECT id,row_count FROM work_import_runs WHERE board_id=$1 AND user_id=$2 AND request_id=$3::uuid AND work_board_role($2,$1)>=2',args.slice(0,3));
