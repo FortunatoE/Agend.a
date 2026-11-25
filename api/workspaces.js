@@ -1,5 +1,6 @@
 const {session,body,allowed,unauth,forbidden}=require('./_core');
-const types=new Set(['text','number','date','checkbox','status']);
+const {computeItems,validateConfig}=require('../lib/work-calculations');
+const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
 module.exports=async(req,res)=>{
@@ -13,9 +14,36 @@ module.exports=async(req,res)=>{
  await sql.query("ALTER TABLE work_items ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES work_groups(id) ON DELETE SET NULL");
  await sql.query("CREATE INDEX IF NOT EXISTS work_items_board_idx ON work_items(board_id)");
  await sql.query("CREATE INDEX IF NOT EXISTS work_groups_board_idx ON work_groups(board_id)");
+ await sql.query("ALTER TABLE work_fields ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'");
+ await sql.query(`DO $migration$
+ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='work_fields'::regclass AND conname='work_fields_type_v2_check') THEN
+ PERFORM pg_advisory_xact_lock(86124013);
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='work_fields'::regclass AND conname='work_fields_type_v2_check') THEN
+ ALTER TABLE work_fields DROP CONSTRAINT IF EXISTS work_fields_type_check;
+ ALTER TABLE work_fields ADD CONSTRAINT work_fields_type_v2_check CHECK(type IN ('text','number','date','checkbox','status','relation','lookup','rollup','formula'));
+ END IF;
+ END IF;
+ END $migrationconst {session,body,allowed,unauth,forbidden}=require('./_core');
+const {computeItems,validateConfig}=require('../lib/work-calculations');
+const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
+const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
+const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
+module.exports=async(req,res)=>{
+ try{
+ const {sql,user}=await session(req);if(!user)return unauth(res);
+ await sql.query("CREATE TABLE IF NOT EXISTS workspaces (id SERIAL PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW())");
+ await sql.query("CREATE TABLE IF NOT EXISTS work_boards (id SERIAL PRIMARY KEY,workspace_id INTEGER NOT NULL REFERENCES workspaces(id),name TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())");
+ await sql.query("CREATE TABLE IF NOT EXISTS work_fields (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,type TEXT NOT NULL CHECK(type IN ('text','number','date','checkbox','status')),UNIQUE(board_id,name))");
+ await sql.query("CREATE TABLE IF NOT EXISTS work_items (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,title TEXT NOT NULL,values JSONB NOT NULL DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW())");
+ await sql.query("CREATE TABLE IF NOT EXISTS work_groups (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,UNIQUE(board_id,name))");
+ await sql.query("ALTER TABLE work_items ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES work_groups(id) ON DELETE SET NULL");
+ await sql.query("CREATE INDEX IF NOT EXISTS work_items_board_idx ON work_items(board_id)");
+);
+
  if(req.method==='GET'){
  const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
- return res.status(200).json({workspaces,boards,fields,items,groups});
+ return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups});
  }
  const d=body(req);const action=d.action;
  if(req.method==='POST'){
@@ -25,7 +53,14 @@ module.exports=async(req,res)=>{
  let rows;
  if(action==='workspace') {if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO workspaces(name) VALUES($1) RETURNING *',[name]);}
  else if(action==='board') {if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO work_boards(workspace_id,name) VALUES($1,$2) RETURNING *',[id(d.workspace_id),name]);}
- else if(action==='field'){if(!user.is_admin)return forbidden(res);if(!types.has(d.type))return res.status(400).json({error:'Tipo inválido.'});rows=await sql.query('INSERT INTO work_fields(board_id,name,type) VALUES($1,$2,$3) RETURNING *',[id(d.board_id),name,d.type]);}
+ else if(action==='field'){
+ if(!user.is_admin)return forbidden(res);
+ const boardId=id(d.board_id);if(!boardId||!types.has(d.type))return res.status(400).json({error:'Quadro ou tipo inválido.'});
+ const [boards,fields]=await Promise.all([sql.query('SELECT id FROM work_boards'),sql.query('SELECT * FROM work_fields')]);
+ if(!boards.some(b=>b.id===boardId))return res.status(400).json({error:'Quadro não encontrado.'});
+ let config;try{config=validateConfig(d.type,d.config,boardId,boards,fields)}catch(e){return res.status(400).json({error:e.message})}
+ rows=await sql.query('INSERT INTO work_fields(board_id,name,type,config) VALUES($1,$2,$3,$4::jsonb) RETURNING *',[boardId,name,d.type,JSON.stringify(config)]);
+ }
  else if(action==='group'){if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO work_groups(board_id,name) VALUES($1,$2) RETURNING *',[id(d.board_id),name]);}
  else if(action==='item')rows=await sql.query('INSERT INTO work_items(board_id,title) VALUES($1,$2) RETURNING *',[id(d.board_id),name]);
  else return res.status(400).json({error:'Ação inválida.'});
@@ -44,7 +79,14 @@ module.exports=async(req,res)=>{
  if(action!=='value')return res.status(400).json({error:'Ação inválida.'});
  const field=(await sql.query('SELECT * FROM work_fields WHERE id=$1 AND board_id=$2',[id(d.field_id),item.board_id]))[0];
  if(!field)return res.status(404).json({error:'Campo não encontrado.'});
+ if(['lookup','rollup','formula'].includes(field.type))return res.status(400).json({error:'Este campo é calculado e não pode ser editado.'});
  let v=d.value,valid=v===null;
+ if(field.type==='relation'&&v!==null){
+ if(!Array.isArray(v)||v.length>200||!v.every(n=>Number.isSafeInteger(n)&&n>0))return res.status(400).json({error:'Selecione até 200 registros válidos.'});
+ v=[...new Set(v)];
+ const targets=await sql.query('SELECT id FROM work_items WHERE board_id=$1 AND id=ANY($2::int[])',[field.config.target_board_id,v]);
+ valid=targets.length===v.length;
+ }
  if(v!==null){
  if(field.type==='text'){valid=typeof v==='string'&&v.length<=2000;}
  if(field.type==='number')valid=typeof v==='number'&&Number.isFinite(v);
