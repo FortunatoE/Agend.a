@@ -43,7 +43,7 @@ Defina `DATABASE_URL` no ambiente. Em produção, a integração Neon da Vercel 
 
 ### Validação antes de publicar
 
-Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Automações configuráveis, relacionamentos, formulários e workflows ainda não implementados.
+Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Formulários e workflows ainda não implementados.
 
 ### Evolução dos quadros
 
@@ -59,3 +59,9 @@ Grupos persistentes por quadro, atribuição de registros a grupos validada no s
 - Relações são armazenadas como IDs em JSONB; registros excluídos ou fora do quadro são ignorados no cálculo e na exibição, sem limpeza física automática dos IDs. Permissões globais continuam vigentes; isolamento granular deve anteceder uso multi-tenant.
 - Migração aditiva: `work_fields.config` e ampliação da restrição de tipos. Validar em banco separado antes do merge.
 - Testes unitários: `npm test` (Node.js). Testar também criação/edição no navegador, recarga, relações inválidas e atualização de valores após editar o quadro de destino.
+
+### Motor de automações v1
+
+Administradores podem criar, pausar, ativar e excluir regras na aba Automações de cada Board. Gatilhos: criação de registro ou mudança de campo editável. Condição opcional: status igual a um valor (somente mudança). Ações: alterar status, mover para grupo, criar registro no mesmo quadro ou notificar usuário ativo. O administrador autoriza a execução das ações por alterações realizadas por usuários com as permissões existentes; não há novas permissões granulares. Regras são avaliadas pelo snapshot da mudança original, em ordem de ID; alterações automáticas não disparam outras regras. Se várias regras alterarem o mesmo campo, prevalece a última. O trigger PostgreSQL registra sucesso/falha na mesma transação, isolando falhas de cada ação. Histórico recente: últimos 200 registros globalmente, visível a administradores. Não há fila, retry, cron, e-mail, webhook ou múltiplas ações por regra. A exclusão preserva o histórico da regra.
+
+Antes da publicação, valide em PostgreSQL de teste: instalação do trigger e constraints; criação, alteração sem mudança real, status condicional, pausa, falha isolada, ausência de cascata, exclusão e histórico, notificação e acesso não-admin. O preview não deve usar o banco de produção. As tabelas e o trigger são criados na primeira chamada autenticada a /api/workspaces.
