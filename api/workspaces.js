@@ -14,12 +14,19 @@ const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {templates,normalizeBulk,bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {decodeWorkbook,encodeWorkbook}=require('../lib/work-xlsx');
+const {ensureWebhooks,processWebhook,manageWebhooks}=require('../lib/work-webhook-db');
+const {workerAuthorized}=require('../lib/work-webhook-rules');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
 module.exports=async(req,res)=>{
  try{
  res.setHeader('Cache-Control','no-store');
+ if(req.query?.worker==='webhooks'){
+ if(req.method!=='POST')return res.status(405).end();
+ if(!workerAuthorized(req))return res.status(401).json({error:'Credencial inválida.'});
+ return res.status(200).json(await processWebhook(database()));
+ }
  if(req.headers.authorization!==undefined)return await externalApi(database(),req,res,body);
  const {sql,user}=await session(req);if(!user)return unauth(res);
  await sql.query("CREATE TABLE IF NOT EXISTS workspaces (id SERIAL PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW())");
@@ -48,6 +55,7 @@ module.exports=async(req,res)=>{
  await ensureApiKeys(sql);
  await ensureSync(sql);
  await ensureEvents(sql);
+ await ensureWebhooks(sql);
  if(req.method==='GET'){
  let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+(t==='workspaces'?' WHERE $1::int IS NOT NULL':t==='work_boards'?' WHERE work_board_role($1,id)>0':' WHERE work_board_role($1,board_id)>0')+' ORDER BY id',[user.id])));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
@@ -79,6 +87,7 @@ module.exports=async(req,res)=>{
  if(!workspace||!name||!Object.hasOwn(templates,d.template)||!(await sql.query('SELECT id FROM workspaces WHERE id=$1',[workspace])).length)return res.status(400).json({error:'Ambiente, nome ou modelo inválido.'});
  return res.status(201).json(await createTemplate(sql,workspace,name,d.template));
  }
+ if(action==='webhooks')return await manageWebhooks(sql,user,d,req.method,res);
  if(action==='api_keys')return await manageKeys(sql,user,d,req.method,res);
  if(action==='exchange'){
  if(req.method!=='POST')return res.status(405).end();
