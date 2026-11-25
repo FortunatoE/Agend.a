@@ -6,6 +6,7 @@ const {ensureAutomations}=require('../lib/work-automation-db');
 const {ensureWorkflows}=require('../lib/work-workflow-db');
 const {ensureForms}=require('../lib/work-form-db');
 const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
+const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -47,5 +48,22 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  await sql.query('ROLLBACK TO SAVEPOINT before_invalid');
  assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_items'))[0].n,2);
  assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_import_runs'))[0].n,1);
+ await sql.query('ALTER TABLE app_users ADD COLUMN can_create BOOLEAN DEFAULT TRUE');
+ await ensureApiKeys(sql);
+ function response(){return {code:0,data:null,setHeader(){},status(c){this.code=c;return this},json(d){this.data=d;return this},end(){return this}}}
+ const admin={id:1,is_admin:true},make=async scope=>{const res=response();await manageKeys(sql,admin,{mode:'create',board_id:1,owner_id:2,name:'Teste API',scope,days:30},'POST',res);assert.equal(res.code,201);return res.data};
+ const key=await make('read_create'),readOnly=await make('read');
+ const call=async(token,method,payload={},query={})=>{const res=response();await externalApi(sql,{headers:{authorization:'Bearer '+token},method,body:payload,query},res,r=>r.body);return res};
+ const payload={title:'API',request_id:'00000000-0000-4000-8000-000000000099',values:{1:'A fazer'}};
+ assert.equal((await call(readOnly.token,'POST',payload)).code,403);
+ const created=await call(key.token,'POST',payload);assert.equal(created.code,201);
+ const again=await call(key.token,'POST',payload);assert.equal(again.code,200);assert.equal(again.data.id,created.data.id);
+ const page=await call(key.token,'GET',{}, {limit:1});assert.equal(page.code,200);assert.equal(page.data.items.length,1);assert.equal(page.data.next_after,page.data.items[0].id);
+ const listed=response();await manageKeys(sql,admin,{mode:'list',board_id:1},'POST',listed);assert.equal(listed.code,200);assert.equal(Object.hasOwn(listed.data.keys[0],'token_hash'),false);
+ await sql.query("UPDATE work_api_keys SET rate_window=date_trunc('minute',NOW()),rate_count=60 WHERE id=$1",[key.id]);
+ assert.equal((await call(key.token,'GET')).code,429);
+ const revoke=response();await manageKeys(sql,admin,{mode:'revoke',board_id:1,key_id:key.id},'POST',revoke);assert.equal(revoke.code,200);assert.equal((await call(key.token,'GET')).code,401);
+ await sql.query("DELETE FROM work_workspace_members WHERE workspace_id=1 AND user_id=2");
+ assert.equal((await call(readOnly.token,'GET')).code,401);
  }finally{try{await sql.query('ROLLBACK')}finally{await client.end()}}
 });
