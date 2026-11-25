@@ -9,6 +9,7 @@ const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
+const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-db');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -87,6 +88,18 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  assert.equal((await sql.query('SELECT group_id FROM work_items WHERE id=$1',[targets[0]]))[0].group_id,1);
  assert.equal(await bulkWrite(sql,3,1,{ids:targets,mode:'delete'}),0);
  assert.equal(await bulkWrite(sql,1,1,{ids:targets,mode:'group',group_id:null}),2);
+ await ensureWebhooks(sql);
+ await sql.query("INSERT INTO work_webhook_subscriptions(board_id,destination,cursor) VALUES(1,'test-only',0)");
+ const claimed=await claimWebhook(sql,1);assert.ok(claimed);assert.equal(await claimWebhook(sql,1),null);
+ assert.equal(await finishWebhook(sql,claimed,{ok:false,status:503}),true);
+ assert.equal(await claimWebhook(sql,1),null);
+ const afterFailure=(await sql.query('SELECT cursor::text,attempts FROM work_webhook_subscriptions'))[0];assert.equal(afterFailure.cursor,'0');assert.equal(afterFailure.attempts,1);
+ await sql.query('UPDATE work_webhook_subscriptions SET next_attempt=NOW()');
+ const retried=await claimWebhook(sql,1);assert.equal(String(retried.seq),String(claimed.seq));
+ assert.equal(await finishWebhook(sql,retried,{ok:true,status:200}),true);
+ assert.equal(await finishWebhook(sql,claimed,{ok:true,status:200}),false);
+ const afterSuccess=(await sql.query('SELECT cursor::text,attempts FROM work_webhook_subscriptions'))[0];assert.equal(afterSuccess.cursor,String(claimed.seq));assert.equal(afterSuccess.attempts,0);
+ assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_webhook_attempts'))[0].n,2);
  await sql.query('UPDATE app_users SET can_edit=false WHERE id=2');
  assert.equal((await call(sync.token,'PATCH',{...baseSync,request_id:'00000000-0000-4000-8000-000000000012'})).code,403);
  await sql.query("DELETE FROM work_workspace_members WHERE workspace_id=1 AND user_id=2");
