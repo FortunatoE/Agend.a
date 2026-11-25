@@ -1,0 +1,51 @@
+'use strict';
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const {ensureGovernance}=require('../lib/work-governance-db');
+const {ensureAutomations}=require('../lib/work-automation-db');
+const {ensureWorkflows}=require('../lib/work-workflow-db');
+const {ensureForms}=require('../lib/work-form-db');
+const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
+const url=process.env.AGEND_TEST_DATABASE_URL;
+test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
+ const parsed=new URL(url);
+ if(!['localhost','127.0.0.1'].includes(parsed.hostname)||parsed.pathname!=='/agend_test')throw Error('Use apenas o banco local descartável agend_test.');
+ const {Client}=require('pg'),client=new Client({connectionString:url});
+ await client.connect();const sql={query:async(q,p)=> (await client.query(q,p)).rows};
+ try{
+ await sql.query('BEGIN');
+ // Dedicated empty database. All fixture DDL and changes are rolled back.
+ await sql.query(`CREATE TABLE app_users(id SERIAL PRIMARY KEY,name TEXT,active BOOLEAN DEFAULT true,is_admin BOOLEAN DEFAULT false);
+ CREATE TABLE notifications(id SERIAL PRIMARY KEY,user_id INT REFERENCES app_users(id),task_id INT,type TEXT,title TEXT,message TEXT);
+ CREATE TABLE workspaces(id SERIAL PRIMARY KEY,name TEXT);
+ CREATE TABLE work_boards(id SERIAL PRIMARY KEY,workspace_id INT REFERENCES workspaces(id),name TEXT);
+ CREATE TABLE work_fields(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT,type TEXT,config JSONB DEFAULT '{}');
+ CREATE TABLE work_groups(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT);
+ CREATE TABLE work_items(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),group_id INT REFERENCES work_groups(id),title TEXT CHECK(length(title)<=120),values JSONB DEFAULT '{}');
+ INSERT INTO app_users(name,is_admin) VALUES('Admin',true),('Editor',false),('Leitor',false);
+ INSERT INTO workspaces(name) VALUES('Teste');
+ INSERT INTO work_boards(workspace_id,name) VALUES(1,'Quadro');
+ INSERT INTO work_fields(board_id,name,type) VALUES(1,'Status','status');
+ INSERT INTO work_groups(board_id,name) VALUES(1,'Finalizados');`);
+ await ensureGovernance(sql);await ensureAutomations(sql);await ensureWorkflows(sql);await ensureForms(sql);await ensureExchange(sql);
+ await sql.query("UPDATE workspaces SET restricted=true; UPDATE work_boards SET restricted=true; INSERT INTO work_workspace_members VALUES(1,2,'editor'),(1,3,'viewer'); INSERT INTO work_board_members VALUES(1,2,'editor'),(1,3,'manager')");
+ assert.equal((await sql.query('SELECT work_board_role(2,1) AS r'))[0].r,2);
+ assert.equal((await sql.query('SELECT work_board_role(3,1) AS r'))[0].r,1);
+ await sql.query("INSERT INTO work_automations(board_id,name,trigger_config,condition_config,effect_config,created_by) VALUES(1,'Inicializar','{\"type\":\"created\"}','{\"type\":\"always\"}','{\"type\":\"set_status\",\"field_id\":1,\"value\":\"Concluído\"}',1)");
+ await sql.query("INSERT INTO work_workflows(board_id,name,trigger_config,steps,created_by) VALUES(1,'Mover','{\"type\":\"created\"}','[{\"type\":\"condition\",\"field_id\":1,\"value\":\"Concluído\",\"yes\":[{\"type\":\"move_group\",\"group_id\":1}],\"no\":[]}]',1)");
+ const args=[1,2,'00000000-0000-4000-8000-000000000001',2,JSON.stringify([{title:'A',values:{}},{title:'B',values:{}}]),null];
+ const first=await insertBatch(sql,args);assert.equal(first[0].inserted,2);
+ assert.equal((await insertBatch(sql,args)).length,0);
+ assert.equal((await insertBatch(sql,[1,3,'00000000-0000-4000-8000-000000000002',2,args[4],null])).length,0);
+ const items=await sql.query('SELECT * FROM work_items ORDER BY id');
+ assert.equal(items.length,2);assert.equal(items[0].values['1'],'Concluído');assert.equal(items[0].group_id,1);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM work_automation_runs WHERE result='success'"))[0].n,2);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM work_workflow_runs WHERE result='success'"))[0].n,2);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM work_audit WHERE actor_id=2 AND event='item_created'"))[0].n,2);
+ await sql.query('SAVEPOINT before_invalid');
+ await assert.rejects(()=>insertBatch(sql,[1,2,'00000000-0000-4000-8000-000000000003',2,JSON.stringify([{title:'C',values:{}},{title:'x'.repeat(121),values:{}}]),null]));
+ await sql.query('ROLLBACK TO SAVEPOINT before_invalid');
+ assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_items'))[0].n,2);
+ assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_import_runs'))[0].n,1);
+ }finally{try{await sql.query('ROLLBACK')}finally{await client.end()}}
+});
