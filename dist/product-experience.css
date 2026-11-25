@@ -67,3 +67,5 @@ input[type=checkbox],input[type=radio]{accent-color:var(--green)}
 .card.tk-dragging{opacity:.45}.ws-side .ws-link{display:block;width:100%;overflow-wrap:anywhere}.ws-side .plain{justify-content:flex-start}
 .bp-nav-group .tab{display:inline-flex;align-items:center;gap:4px}.bp-nav .ui-icon{width:15px;height:15px;margin:0}.ui-search kbd{font:11px ui-monospace,monospace}
 @media(max-width:760px){.ws-side .ws-link{width:auto;max-width:100%}.ws-side .plain{justify-content:center}.ui-detail-meta{grid-template-columns:1fr 1fr}.ui-search-results .plain{min-height:44px}}
+
+.ui-loading{min-height:180px}.ui-skeleton{height:18px;background:var(--soft);border-radius:6px;margin:12px 0;max-width:65%}.ui-skeleton:nth-child(3){max-width:48%}.ui-skeleton:nth-child(4){max-width:57%}
