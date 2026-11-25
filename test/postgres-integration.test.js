@@ -7,6 +7,7 @@ const {ensureWorkflows}=require('../lib/work-workflow-db');
 const {ensureForms}=require('../lib/work-form-db');
 const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
+const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -22,7 +23,7 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  CREATE TABLE work_boards(id SERIAL PRIMARY KEY,workspace_id INT REFERENCES workspaces(id),name TEXT);
  CREATE TABLE work_fields(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT,type TEXT,config JSONB DEFAULT '{}');
  CREATE TABLE work_groups(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT);
- CREATE TABLE work_items(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),group_id INT REFERENCES work_groups(id),title TEXT CHECK(length(title)<=120),values JSONB DEFAULT '{}');
+ CREATE TABLE work_items(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),group_id INT REFERENCES work_groups(id),title TEXT CHECK(length(title)<=120),values JSONB DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW());
  INSERT INTO app_users(name,is_admin) VALUES('Admin',true),('Editor',false),('Leitor',false);
  INSERT INTO workspaces(name) VALUES('Teste');
  INSERT INTO work_boards(workspace_id,name) VALUES(1,'Quadro');
@@ -48,8 +49,8 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  await sql.query('ROLLBACK TO SAVEPOINT before_invalid');
  assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_items'))[0].n,2);
  assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_import_runs'))[0].n,1);
- await sql.query('ALTER TABLE app_users ADD COLUMN can_create BOOLEAN DEFAULT TRUE');
- await ensureApiKeys(sql);
+ await sql.query('ALTER TABLE app_users ADD COLUMN can_create BOOLEAN DEFAULT TRUE, ADD COLUMN can_edit BOOLEAN DEFAULT TRUE');
+ await ensureApiKeys(sql);await ensureSync(sql);await ensureEvents(sql);
  function response(){return {code:0,data:null,setHeader(){},status(c){this.code=c;return this},json(d){this.data=d;return this},end(){return this}}}
  const admin={id:1,is_admin:true},make=async scope=>{const res=response();await manageKeys(sql,admin,{mode:'create',board_id:1,owner_id:2,name:'Teste API',scope,days:30},'POST',res);assert.equal(res.code,201);return res.data};
  const key=await make('read_create'),readOnly=await make('read');
@@ -63,6 +64,20 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  await sql.query("UPDATE work_api_keys SET rate_window=date_trunc('minute',NOW()),rate_count=60 WHERE id=$1",[key.id]);
  assert.equal((await call(key.token,'GET')).code,429);
  const revoke=response();await manageKeys(sql,admin,{mode:'revoke',board_id:1,key_id:key.id},'POST',revoke);assert.equal(revoke.code,200);assert.equal((await call(key.token,'GET')).code,401);
+ const sync=await make('read_write'),baseSync={title:'Sincronizado',external_id:'ERP-001',request_id:'00000000-0000-4000-8000-000000000010',values:{1:'A fazer'}};
+ assert.equal((await call(readOnly.token,'PATCH',baseSync)).code,403);
+ const insertedSync=await call(sync.token,'PATCH',baseSync);assert.equal(insertedSync.code,201);
+ const updatedSync=await call(sync.token,'PATCH',{...baseSync,title:'Atualizado',request_id:'00000000-0000-4000-8000-000000000011',values:{1:null}});
+ assert.equal(updatedSync.code,200);assert.equal(updatedSync.data.id,insertedSync.data.id);assert.equal(updatedSync.data.created,false);
+ const replaySync=await call(sync.token,'PATCH',baseSync);assert.equal(replaySync.data.replayed,true);
+ const stored=(await sql.query("SELECT * FROM work_items WHERE external_id='ERP-001'"))[0];assert.equal(stored.title,'Atualizado');assert.equal(stored.values['1'],null);assert.equal(stored.group_id,1);
+ const eventPage=await call(sync.token,'GET',{}, {events:'1',limit:1});
+ assert.equal(eventPage.code,200);assert.equal(eventPage.data.events.length,1);assert.equal(eventPage.data.has_more,true);
+ const nextPage=await call(sync.token,'GET',{}, {events:'1',after:eventPage.data.next_after});
+ assert.equal(nextPage.code,200);assert.equal(nextPage.data.events.some(e=>e.item_id===insertedSync.data.id&&e.event==='updated'),true);
+ assert.equal(nextPage.data.events.every(e=>BigInt(e.cursor)>BigInt(eventPage.data.next_after)),true);
+ await sql.query('UPDATE app_users SET can_edit=false WHERE id=2');
+ assert.equal((await call(sync.token,'PATCH',{...baseSync,request_id:'00000000-0000-4000-8000-000000000012'})).code,403);
  await sql.query("DELETE FROM work_workspace_members WHERE workspace_id=1 AND user_id=2");
  assert.equal((await call(readOnly.token,'GET')).code,401);
  }finally{try{await sql.query('ROLLBACK')}finally{await client.end()}}
