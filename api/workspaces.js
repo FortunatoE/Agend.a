@@ -1,5 +1,7 @@
 const {session,body,allowed,unauth,forbidden}=require('./_core');
 const {computeItems,validateConfig}=require('../lib/work-calculations');
+const {ensureAutomations}=require('../lib/work-automation-db');
+const {normalizeRule}=require('../lib/work-automation-rules');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -24,11 +26,34 @@ module.exports=async(req,res)=>{
  END IF;
  END;
  $migration$`);
+ await ensureAutomations(sql);
  if(req.method==='GET'){
  const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
- return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups});
+ const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
+ return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups,automations,automationRuns});
  }
  const d=body(req);const action=d.action;
+ if(action==='automation'){
+ if(!user.is_admin)return forbidden(res);
+ if(req.method==='POST'){
+ const board=id(d.board_id);
+ if(!board||!(await sql.query('SELECT id FROM work_boards WHERE id=$1',[board])).length)return res.status(400).json({error:'Quadro inválido.'});
+ const [fields,groups,users]=await Promise.all([sql.query('SELECT id,board_id,type FROM work_fields WHERE board_id=$1',[board]),sql.query('SELECT id,board_id FROM work_groups WHERE board_id=$1',[board]),sql.query('SELECT id FROM app_users WHERE active')]);
+ let rule;try{rule=normalizeRule(d,board,fields,groups,users)}catch(e){return res.status(400).json({error:e.message})}
+ const result=await sql.query('INSERT INTO work_automations(board_id,name,trigger_config,condition_config,effect_config,created_by) VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6) RETURNING *',[board,rule.name,JSON.stringify(rule.trigger),JSON.stringify(rule.condition),JSON.stringify(rule.effect),user.id]);
+ return res.status(201).json(result[0]);
+ }
+ if(req.method==='PATCH'){
+ if(!id(d.id)||typeof d.enabled!=='boolean')return res.status(400).json({error:'Automação ou estado inválido.'});
+ const result=await sql.query('UPDATE work_automations SET enabled=$1 WHERE id=$2 RETURNING *',[d.enabled,id(d.id)]);
+ return result.length?res.status(200).json(result[0]):res.status(404).json({error:'Automação não encontrada.'});
+ }
+ if(req.method==='DELETE'){
+ if(!id(d.id))return res.status(400).json({error:'Automação inválida.'});
+ await sql.query('DELETE FROM work_automations WHERE id=$1',[id(d.id)]);return res.status(200).json({ok:true});
+ }
+ return res.status(405).end();
+ }
  if(req.method==='POST'){
  if(!allowed(user,'create'))return forbidden(res);
  const name=clean(d.name);
