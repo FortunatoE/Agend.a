@@ -43,7 +43,7 @@ Defina `DATABASE_URL` no ambiente. Em produção, a integração Neon da Vercel 
 
 ### Validação antes de publicar
 
-Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Formulários e workflows ainda não implementados.
+Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Formulários ainda não implementados.
 
 ### Evolução dos quadros
 
@@ -65,3 +65,9 @@ Grupos persistentes por quadro, atribuição de registros a grupos validada no s
 Administradores podem criar, pausar, ativar e excluir regras na aba Automações de cada Board. Gatilhos: criação de registro ou mudança de campo editável. Condição opcional: status igual a um valor (somente mudança). Ações: alterar status, mover para grupo, criar registro no mesmo quadro ou notificar usuário ativo. O administrador autoriza a execução das ações por alterações realizadas por usuários com as permissões existentes; não há novas permissões granulares. Regras são avaliadas pelo snapshot da mudança original, em ordem de ID; alterações automáticas não disparam outras regras. Se várias regras alterarem o mesmo campo, prevalece a última. O trigger PostgreSQL registra sucesso/falha na mesma transação, isolando falhas de cada ação. Histórico recente: últimos 200 registros globalmente, visível a administradores. Não há fila, retry, cron, e-mail, webhook ou múltiplas ações por regra. A exclusão preserva o histórico da regra.
 
 Antes da publicação, valide em PostgreSQL de teste: instalação do trigger e constraints; criação, alteração sem mudança real, status condicional, pausa, falha isolada, ausência de cascata, exclusão e histórico, notificação e acesso não-admin. O preview não deve usar o banco de produção. As tabelas e o trigger são criados na primeira chamada autenticada a /api/workspaces.
+
+### Workflow Builder v1
+
+Na aba Workflows, administradores criam fluxos por quadro com gatilho de criação ou alteração de campo editável. O editor permite até 10 etapas ordenadas, incluindo ações e decisões de status com caminhos Sim/Não (até 5 ações por caminho, 20 ações no total). Ações: alterar status, mover grupo, criar registro no próprio quadro e notificar usuário ativo. A condição lê o estado atual do registro, incluindo efeitos de etapas anteriores. Os gatilhos usam a mudança original; o trigger de automações simples roda antes do trigger de workflows, por ordem alfabética do PostgreSQL. Cada fluxo roda em uma subtransação: qualquer falha reverte todas as suas ações, preservando a alteração original e os demais fluxos. Alterações automáticas não disparam outros fluxos nem automações. Histórico preservado ao excluir o fluxo; últimos 200 registros globalmente para administradores. Não há espera, aprovação humana persistente, agendamento, editor de grafo livre, edição de fluxos publicados ou integração externa nesta versão.
+
+Valide em banco de teste: instalação do trigger, execução ordenada, caminhos Sim/Não, pausa, falha após etapa bem-sucedida (rollback inclusive de notificações), ausência de recursão e coexistência com automações simples. Verifique também permissões, histórico e interface. A criação das tabelas e do trigger ocorre na primeira chamada autenticada de /api/workspaces.
