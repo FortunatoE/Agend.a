@@ -345,3 +345,17 @@ O merge no GitHub é uma atualização de código; **não é confirmação de de
 - Homologação completa com autenticação e banco reais em Preview; teste e monitoramento do ambiente publicado.
 
 O repositório mantém a implementação incremental, as regras de domínio testáveis e os diagramas versionados. Consulte [Pull Request #1](https://github.com/FortunatoE/Agend.a/pull/1) e [GitHub Actions](https://github.com/FortunatoE/Agend.a/actions) para histórico e resultados.
+
+## Product Experience — atualização visual
+
+A camada `dist/product-experience.css` centraliza os tokens da interface (paleta verde, contraste, estados, espaçamento e componentes) e sobrescreve estilos antigos sem remover as visualizações existentes. `dist/product-experience.js` contém a biblioteca local de ícones SVG de traço uniforme, a navegação agrupada/recolhível, a busca, os indicadores operacionais e os recursos de acessibilidade. Os SVGs são definidos localmente, sem dependência externa ou fonte de ícones.
+
+- Navegação com rótulos, ícones, identificação da página ativa e preferência de recolhimento local. Em telas estreitas, o menu continua acessível por rolagem horizontal.
+- Busca por atividades legadas e nomes de Boards autorizados, com pesquisa sem acentos e atalho Ctrl/Cmd+K; não pesquisa o conteúdo dos registros dinâmicos.
+- Visão geral com KPIs clicáveis e filtros na tabela, distribuição exclusiva por status e próximas entregas. Atraso é uma condição de prazo independente do status.
+- Detalhe de atividade e notificações em painéis laterais, com foco confinado ao diálogo, Escape e restauração de foco. Formulários existentes permanecem em modais.
+- Relatórios usam responsáveis reais e nomes presentes nos dados, não colaboradores fictícios fixos. As barras de atividades abertas são relativas à maior contagem, não à capacidade de horas.
+- Campos e ações com rótulos, botões destrutivos diferenciados, estados de carregamento de quadros, erro recuperável, aviso de sucesso/erro e proteção contra envios duplicados no login e na criação de atividades.
+- O teste Chromium de experiência cobre navegação, ícones, indicadores, busca, diálogo, painel lateral e viewport móvel com API simulada.
+
+Não altera tabelas, permissões ou regras de negócio. A remodelação é incremental: a unificação completa do módulo legado com Boards, o editor gráfico de workflows, a revisão integral dos formulários e a auditoria WCAG completa com leitores de tela ainda são evoluções futuras. Validar em Preview antes da publicação.
