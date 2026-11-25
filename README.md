@@ -1,135 +1,347 @@
-# Agend.a
+<div align="center">
 
-Plataforma interna para distribuir e acompanhar atividades de equipe.
+# ◒ agend.a 2.0
 
-## Recursos
+**Work OS · Gestão de atividades, processos, dados e integrações**
 
-- Visão geral por área
-- Kanban persistente
-- Calendário de prazos
-- Rotinas recorrentes
-- Relatórios por área
-- Tema claro e escuro
-- Controle de acesso por usuário e permissões
-- Checklists, comentários, histórico e anexos privados
-- Calendário anual, mensal, semanal e diário
-- PostgreSQL no Neon, conectado à Vercel
+Uma plataforma de trabalho modular inspirada na organização dos Work OS: da atividade operacional à automação de processos e inteligência gerencial.
 
-## Áreas
+![Node.js](https://img.shields.io/badge/Node.js-22-168353?style=flat-square)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-123b2a?style=flat-square)
+![Frontend](https://img.shields.io/badge/Frontend-JavaScript-168353?style=flat-square)
+![Deployment](https://img.shields.io/badge/Infraestrutura-Vercel-123b2a?style=flat-square)
 
-- Administrativo
-- Logística · Defensivo
-- Logística · Adubo
-- Planejamento
+[Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Dados](#modelo-de-dados) · [API](#api-rest) · [Instalação](#instalação-e-execução) · [Qualidade](#qualidade-e-publicação)
 
-## Desenvolvimento
+</div>
+
+## Visão do produto
+
+A agend.a reúne gestão de atividades tradicionais e quadros configuráveis em uma mesma aplicação. Cada quadro possui registros, grupos, campos tipados e visualizações independentes. Os dados podem ser recebidos por formulários, planilhas e API, processados por regras e workflows e apresentados em indicadores.
+
+A aplicação utiliza interface web em português, tema claro/escuro com identidade verde, funções Node.js serverless e PostgreSQL. Não exige um framework de frontend ou um servidor permanente para a aplicação web.
+
+**Estado da versão:** implementação inicial dos módulos abaixo; a aprovação de testes automatizados não equivale à homologação de todos os fluxos com dados reais. O módulo legado permanece separado dos Boards dinâmicos; não há migração automática das tarefas antigas. A disponibilidade em produção depende da configuração do projeto Vercel e do banco correto.
+
+## Funcionalidades
+
+| Módulo | Funcionalidades implementadas | Limites da versão |
+|---|---|---|
+| Atividades legadas | Visão geral, quadro, Kanban, calendário, rotinas recorrentes, relatórios, checklists, comentários, histórico e anexos | Permissões globais; estrutura separada dos Boards |
+| Workspaces e Boards | Ambientes, quadros, grupos, registros, campos configuráveis, modelos | Administração centralizada; sem organizações multi-tenant |
+| Tabela | Edição inline, pesquisa sem acentos, filtros por grupo/status, ordenação, paginação de 25/50/100 | Paginação local; não reduz todo o payload de rede |
+| Kanban | Status em colunas, movimentação por arraste ou seletor, comentários | Usa o primeiro campo de status |
+| Calendário | Grade mensal, campo de data selecionável, navegação por mês | Semana/dia no módulo legado; Board dinâmico mensal |
+| Gantt | Datas de início/fim, duração inclusiva, conflitos de dependências | Sem caminho crítico ou reprogramação automática |
+| Workload | Agrupamento por responsável textual, esforço, capacidade e sobrecarga | Capacidade uniforme; sem cadastro de disponibilidade |
+| Dashboards | KPIs de diversos Boards, resumo por status e campos numéricos | Até 20 indicadores; preferências no navegador |
+| Dados relacionais | Relation, Lookup, Rollup, fórmulas aritméticas | Sem fórmulas encadeadas ou código arbitrário |
+| Automations | Gatilhos por criação/alteração, condições e ações | Uma ação por regra; sem cascata |
+| Workflows | Etapas ordenadas, decisões Sim/Não, ações, histórico e rollback | Sem canvas livre, aprovação humana persistente ou espera |
+| Forms | Formulário autenticado, campos obrigatórios, grupo de destino, protocolo | Sem acesso anônimo ou edição de definições publicadas |
+| Governança | Perfis por workspace/Board, validação no servidor, auditoria | Não é isolamento completo por organização ou RLS |
+| Colaboração | Comentários e menções em registros dinâmicos | Anexos dinâmicos e grupos de usuários pendentes |
+| Planilhas | CSV/TSV e XLSX, mapeamento, prévia, importação e exportação | Importação cria registros; sem upsert por planilha |
+| API REST | Chaves restritas, GET, POST, PATCH, paginação, idempotência | Sem exclusão externa |
+| Eventos e webhooks | Feed por cursor, entrega assinada, retries, monitoramento | Destinos e agendador dependem de infraestrutura |
+
+### Como organizar o trabalho
+
+1. Crie um Workspace para a equipe ou departamento.
+2. Crie um Board vazio ou use um dos modelos: Projetos, Rotinas operacionais ou Solicitações.
+3. Configure grupos e campos de acordo com o processo.
+4. Defina os acessos antes de adicionar dados confidenciais.
+5. Insira registros pela tabela, formulário, planilha ou API.
+6. Configure automações e workflows somente depois de validar seus efeitos.
+7. Acompanhe prazos, indicadores e carga nas visualizações.
+
+A navegação de cada Board agrupa **Visualizações**, **Operações** e **Administração**. As ações em massa permitem mover grupo, alterar status e excluir até 100 registros, conforme o perfil. A seleção é validada antes da mutação no SQL.
+
+## Arquitetura
+
+![Arquitetura em camadas](docs/images/architecture.svg)
+
+### Camadas e responsabilidades
+
+| Camada | Tecnologia / arquivos | Responsabilidade |
+|---|---|---|
+| Interface | `dist/index.html`, CSS e módulos JS | Autenticação visual, navegação, edição e relatórios |
+| Estado do Board | `dist/workspaces.js`, `board-core.js`, `board-experience.js` | Dados autorizados, filtros, tabela, Kanban e operações |
+| Visualizações | `analytics-core.js`, `advanced-views.js` | Calendário, cronograma, capacidade e KPIs |
+| API | `api/workspaces.js`, APIs legadas em `api/` | Roteamento, autenticação, validação e persistência |
+| Segurança | `api/_core.js`, `lib/work-access.js`, `work-governance-db.js` | Sessões, permissões, filtragem e auditoria |
+| Cálculos | `lib/work-calculations.js` | Relações e resultados derivados |
+| Processos | `work-automation-*.js`, `work-workflow-*.js`, `work-form-*.js` | Regras, etapas, submissões e triggers |
+| Integrações | `work-exchange-db.js`, `work-xlsx.js`, `work-api-*.js`, `work-sync-db.js`, `work-webhook-*.js` | Importação, API externa, eventos e entregas |
+| Persistência | PostgreSQL via `@neondatabase/serverless` | Dados, integridade, transações e histórico |
+| Arquivos legados | `@vercel/blob` | Anexos das tarefas tradicionais |
+
+A API carrega apenas dados de Boards autorizados e deriva cálculos no servidor. O frontend usa os dados resultantes para construir as visualizações. As preferências de dashboard são locais ao navegador; não representam uma configuração compartilhada.
+
+### Organização do código-fonte
+
+```text
+Agend.a/
+├── api/                       # Funções HTTP Vercel e núcleo de sessão
+│   ├── _core.js                # Banco, autenticação e bootstrap legado
+│   ├── auth.js
+│   ├── tasks.js
+│   └── workspaces.js           # Entrada principal do Work OS
+├── dist/                      # Frontend servido pela Vercel
+│   ├── index.html
+│   ├── security.js
+│   ├── workspaces.js
+│   ├── board-core.js
+│   ├── board-experience.js
+│   ├── board-experience.css
+│   ├── analytics-core.js
+│   ├── advanced-views.js / advanced-views.css
+│   ├── automations.js / workflows.js / forms.js
+│   ├── governance.js
+│   ├── exchange-core.js / exchange.js
+│   └── api-keys.js / webhooks.js
+├── lib/                       # Regras, migrações e operações de domínio
+├── test/                      # Testes Node.js e PostgreSQL descartável
+├── e2e/board.spec.js           # Smoke test Chromium com API simulada
+├── docs/images/               # Diagramas SVG versionados
+├── .github/workflows/         # CI: testes, navegador e auditoria
+├── package.json
+└── vercel.json
+```
+
+Os nomes unidos por barras acima indicam arquivos separados. Os diagramas são representações técnicas originais da estrutura, não screenshots da aplicação em produção.
+
+## Modelo de dados
+
+![Modelo lógico de dados](docs/images/data-model.svg)
+
+### Entidades e relacionamentos
+
+| Entidade | Responsabilidade e vínculo |
+|---|---|
+| `workspaces` | Ambiente de trabalho; pode ser compartilhado ou restrito |
+| `work_boards` | Pertence a um workspace |
+| `work_groups` | Classificação opcional dos registros de um Board |
+| `work_fields` | Definição de campo por Board; tipo e configuração JSONB |
+| `work_items` | Registro com título, Board, grupo, valores JSONB e identificador externo opcional |
+| `work_workspace_members` / `work_board_members` | Perfis de usuários por escopo |
+| `work_comments` | Comentários associados a registros |
+| `work_audit` | Eventos de auditoria e autor quando identificável |
+| `work_automations` / `work_automation_runs` | Regras e histórico de execução |
+| `work_workflows` / `work_workflow_runs` | Fluxos, etapas e histórico |
+| `work_forms` / `work_form_submissions` | Definições e respostas originais |
+| `work_import_runs` | Lotes importados e controle de repetição |
+| `work_api_keys` / `work_api_requests` / `work_api_logs` | Credenciais, requisições idempotentes e logs |
+| `work_sync_requests` | Idempotência de sincronizações PATCH |
+| `work_event_counters` / `work_sync_events` | Sequência e eventos persistentes por Board |
+| `work_webhook_subscriptions` / `work_webhook_attempts` | Inscrições, leases, cursores e tentativas de entrega |
+| `app_users` / `app_sessions` | Usuários e sessões compartilhados com o módulo legado |
+| `tasks` e tabelas auxiliares | Atividades tradicionais e sua colaboração |
+
+Campos dinâmicos são armazenados por ID em `work_items.values`:
+
+```json
+{"12":"Em andamento","15":250.5,"18":false,"21":"2026-12-01"}
+```
+
+A definição do campo determina o tipo e a validação. A chave do campo não depende de sua posição na interface. IDs de grupos e relações são validados contra seus Boards. As migrações são aditivas e inicializadas pelas primeiras chamadas autenticadas; não substituem um backup nem uma revisão de migração em preview.
+
+### Campos e cálculo
+
+| Tipo | Armazenamento / lógica |
+|---|---|
+| Texto | String, até 2.000 caracteres |
+| Número | Número finito |
+| Data | ISO AAAA-MM-DD, com validação de calendário |
+| Checkbox | Booleano verdadeiro/falso, distinto de vazio |
+| Status | A fazer, Em andamento, Concluído ou vazio |
+| Relation | IDs de até 200 registros de um Board de destino |
+| Lookup | Lista de valores básicos ou títulos dos relacionados |
+| Rollup | Contagem, soma, média, mínimo ou máximo |
+| Fórmula | Dois campos numéricos locais com +, -, *, / |
+
+Resultados derivados não são editáveis e são recalculados no carregamento. Dados ausentes ou divisão por zero produzem resultado vazio quando aplicável. Relações excluídas são ignoradas; não há limpeza física automática de todos os IDs antigos. Relações para quadros inacessíveis e seus campos derivados são ocultados.
+
+## Processos e entrada de informações
+
+![Fluxo de processamento](docs/images/event-flow.svg)
+
+### Automações
+
+As regras são configuradas por administradores para criação de registro ou mudança de campo editável. Uma condição de status pode limitar a execução. A ação pode alterar status, mover grupo, criar registro no mesmo Board ou emitir notificação interna genérica a um destinatário autorizado. As regras usam o evento original e são executadas em ordem de ID; alterações automáticas não provocam cascata. Falhas de uma ação são isoladas.
+
+### Workflows
+
+O editor permite até 10 etapas, com ações e condições de status, caminhos Sim/Não, até 5 ações por caminho e 20 ações configuradas por fluxo. As etapas são avaliadas sequencialmente; as condições podem considerar efeitos anteriores. Cada fluxo executa em subtransação PostgreSQL: se falhar, as ações daquele fluxo são revertidas, preservando a operação que o originou. Histórico de execução e rastreabilidade ficam disponíveis aos administradores.
+
+### Formulários
+
+Seleção de até 30 campos básicos adicionais, título obrigatório, descrição e grupo de destino. O usuário autenticado com criação pode responder via aba Formulários ou link interno `?form=ID`. Cada envio grava o item e suas respostas originais em uma operação atômica. UUID protege contra reenvio da mesma submissão; o protocolo identifica o envio mesmo que o item seja alterado posteriormente. As respostas disparam gatilhos de criação.
+
+### Planilhas
+
+| Recurso | CSV/TSV | XLSX |
+|---|---|---|
+| Importação | 200 registros, 100 colunas, 500 mil caracteres | Primeira aba, mesmos limites, 1,5 MB compactados e 12 MB descompactados |
+| Prévia | Mapeamento, até 10 registros e 100 erros exibidos | Mesmo motor de validação |
+| Exportação | Até 10 mil registros / 3,5 MB | Até 5 mil registros, 100 campos / 2,5 MB |
+| Segurança | Neutralização de textos interpretáveis como fórmulas na exportação | Rejeição de fórmulas, células especiais, arquivos protegidos e objetos incorporados na importação |
+
+O lote só é gravado após a validação; a criação e o histórico do lote compartilham uma instrução SQL. CSV usa UTF-8 com BOM na exportação. XLSX preserva tipos básicos e aplica cabeçalho verde, filtros e primeira linha congelada. A importação é de inclusão, não atualização por chave; o upsert está disponível na API.
+
+## Segurança e governança
+
+| Perfil | Consulta e comentários | Criação e edição | Exclusão | Administração |
+|---|:---:|:---:|:---:|:---:|
+| Administrador | Sim | Sim | Sim | Sim |
+| Gestor | Sim | Conforme flags globais | Conforme flag global | Não |
+| Editor | Sim | Conforme flags globais | Não | Não |
+| Leitor | Sim | Não | Não | Não |
+
+O perfil efetivo corresponde ao menor nível entre o Workspace e o Board. Escopos restritos exigem um membro explícito; escopos compartilhados mantêm o acesso anterior. A remoção de uma permissão explícita em um ambiente compartilhado restaura o perfil padrão. Administradores mantêm acesso global.
+
+- Sessões autenticadas, senhas com scrypt e salt e tokens de sessão armazenados como hash.
+- Validação de permissões no servidor, incluindo ID direto, formulários, importação, alterações em massa e relações.
+- Notificações dos Boards dinâmicos usam conteúdo genérico para reduzir vazamento de informações.
+- Auditoria administrativa de registros, comentários e permissões, sem trilha completa de todos os valores antes/depois.
+- Chaves REST aleatórias de 256 bits, armazenadas como SHA-256; a chave original aparece uma vez.
+- Segredos de banco, chaves e webhooks devem permanecer exclusivamente em variáveis de ambiente ou gerenciadores de segredos.
+- Os Boards novos e existentes começam compartilhados. Restringir antes de inserir informações confidenciais.
+- O módulo legado não utiliza o RBAC por Board. Não considerar esta versão um SaaS multi-tenant isolado.
+
+## API REST
+
+Endpoint: `/api/workspaces`. Utilize HTTPS e o cabeçalho `Authorization: Bearer SUA_CHAVE`. As chaves são geradas pelo administrador na aba API e integrações, possuem um Board e usuário responsável, expiram em 1–90 dias e podem ser revogadas. O usuário precisa manter as permissões necessárias.
+
+| Método | Operação | Escopo |
+|---|---|---|
+| GET `?limit=100&after=0` | Lista campos básicos, grupos e registros paginados | read, read_create, read_write |
+| GET `?events=1&after=0&limit=100` | Feed de alterações por cursor | read, read_create, read_write |
+| POST | Cria registro | read_create, read_write |
+| PATCH | Cria ou atualiza por external_id | read_write |
+
+Limite de 60 requisições por minuto por chave; respostas grandes exigem paginação menor. HTTP 429 indica que o consumidor deve aguardar antes de repetir. A API externa não expõe campos calculados ou relações. Logs registram método/status sem token ou payload, mas não incluem todas as tentativas rejeitadas.
+
+### Consulta de registros
+
+```http
+GET /api/workspaces?limit=100&after=0
+Authorization: Bearer SUA_CHAVE
+```
+
+Use `next_after` para continuar até retornar nulo.
+
+### Criação
+
+```json
+{
+  "title": "Solicitação de material",
+  "request_id": "00000000-0000-4000-8000-000000000001",
+  "values": {"12":"A fazer","15":250}
+}
+```
+
+### Sincronização (upsert)
+
+```json
+{
+  "external_id": "ERP-001",
+  "title": "Solicitação de material",
+  "request_id": "00000000-0000-4000-8000-000000000002",
+  "values": {"15":300}
+}
+```
+
+Envie via PATCH. O identificador externo é único por Board, sensível a maiúsculas/minúsculas e limitado a 120 caracteres. Campos omitidos são preservados, nulo explícito limpa um valor, grupo omitido permanece. O título é obrigatório. Um novo UUID representa uma nova operação; repita o mesmo UUID ao reenviar após erro de rede. Não há associação automática a registros antigos sem identificador externo. A API não oferece exclusão externa.
+
+### Feed e webhooks
+
+Cada Board tem contador transacional e eventos `created`, `updated`, `deleted`. O consumidor guarda o cursor textual e só avança após processar os eventos; use `has_more` para paginar. O feed não é retroativo nem mantém snapshots completos de valores.
+
+Os webhooks enviam metadados mínimos do evento a destinos HTTPS preconfigurados, com HMAC-SHA256 e ID de entrega estável. Cabeçalhos: `X-Agend-Delivery`, `X-Agend-Timestamp`, `X-Agend-Signature`. A assinatura cobre timestamp, ponto e corpo exato. O consumidor deve verificar assinatura e deduplicar IDs.
+
+O worker usa lease de 60 segundos, timeout de 5 segundos e não segue redirects. O cursor avança após sucesso HTTP 2xx. Falhas são reprogramadas em 1, 2, 4 e 8 minutos; a quinta falha bloqueia a inscrição. A entrega é pelo menos uma vez, não exatamente uma vez. O administrador pode retomar e liberar tentativas manualmente. Não há retenção automática de eventos ainda.
+
+Para processamento automático, configure um agendador externo para POST `/api/workspaces?worker=webhooks`, autenticado pelo segredo separado do worker. Uma chamada processa no máximo um evento. A interface não permite registrar URLs arbitrárias; a infraestrutura deve garantir destinos e DNS/egress confiáveis. Sem destinos ou agendador configurados, a entrega automática não estará ativa.
+
+## Instalação e execução
+
+### Requisitos
+
+Node.js 22, npm, PostgreSQL compatível com Neon (o ambiente de CI usa PostgreSQL 16) e Vercel CLI para desenvolvimento das funções serverless.
 
 ```bash
 npm install
-vercel dev
+npm test
+npx vercel dev
 ```
 
-Defina `DATABASE_URL` no ambiente. Em produção, a integração Neon da Vercel fornece essa variável automaticamente.
+Configure as variáveis de ambiente no projeto correto, separadas entre desenvolvimento, Preview e Production:
 
-## Work OS — versão em desenvolvimento
+| Variável | Uso |
+|---|---|
+| `DATABASE_URL` | Conexão PostgreSQL/Neon. Obrigatória. |
+| `ADMIN_INITIAL_PASSWORD` | Senha inicial do administrador definido no bootstrap, usada somente quando a tabela de usuários está vazia |
+| `BLOB_READ_WRITE_TOKEN` | Armazenamento dos anexos legados, quando configurado |
+| `AGEND_WEBHOOK_DESTINATIONS` | JSON de aliases para URL HTTPS e segredo; opcional |
+| `AGEND_WEBHOOK_WORKER_SECRET` | Segredo independente do worker, mínimo de 32 caracteres; opcional |
+| `AGEND_TEST_DATABASE_URL` | Somente CI/teste local descartável; nunca apontar para produção |
 
-- Workspaces e quadros criados por administradores.
-- Campos dinâmicos: texto, número, data, checkbox e status.
-- Registros com valores tipados persistidos em PostgreSQL JSONB.
-- Visualizações tabela, Kanban (primeiro campo status) e resumo numérico.
-- Atividades legadas continuam no módulo Quadro, com suas APIs e histórico.
-- A API /api/workspaces utiliza a autenticação e permissões globais existentes. Todos os usuários autenticados compartilham os ambientes; ainda não há isolamento por organização ou quadro.
-- As tabelas novas são criadas de forma aditiva; não há migração automática das atividades para quadros dinâmicos.
+Exemplo de formato de configuração de webhooks (valores fictícios, não usar em produção):
 
-### Validação antes de publicar
+```json
+{"erp":{"url":"https://example.com/hook","secret":"SUBSTITUIR_POR_SEGREDO_ALEATORIO_SEGURO"}}
+```
 
-Use um banco de teste separado. Verifique login, criação de workspace/quadro/campos, edição e exclusão conforme permissões, recarga com persistência, Kanban e resumo, tema escuro, mobile, tarefas antigas, anexos e recorrências. Não execute o preview contra o banco de produção sem autorização. Acesso público a formulários ainda não implementado.
+No primeiro acesso, o bootstrap legado cria as tabelas e pode inserir dados demonstrativos quando a tabela de tarefas está vazia. A criação inicial do administrador depende da variável de senha e do usuário definido no código. Não reutilize senhas de produção em testes.
 
-### Evolução dos quadros
+## Qualidade e publicação
 
-Grupos persistentes por quadro, atribuição de registros a grupos validada no servidor, calendário por campo de data (lista de eventos agrupada por data), dashboard com contagem, conclusão, distribuição por status e soma de campos numéricos. Os dados existentes permanecem sem grupo até serem classificados. Testar também movimentação entre grupos e rejeição de grupo de outro quadro.
+![Pipeline e publicação](docs/images/release.svg)
 
-### Relacionamentos e campos calculados
+A pipeline `Work OS validation` possui três jobs:
 
-- Relacionamento: seleção de até 200 registros do quadro de destino, com validação na API.
-- Lookup: espelha o nome ou um campo básico dos registros vinculados.
-- Rollup: contagem de registros, soma, média, mínimo ou máximo de campos numéricos relacionados.
-- Fórmula: operações +, -, * e / entre dois campos numéricos básicos do mesmo quadro; sem avaliação de código arbitrário. Divisão por zero e dados ausentes resultam em valor vazio.
-- Valores calculados são derivados no servidor ao carregar os quadros e não são editáveis. Ainda não há fórmulas encadeadas ou editor de expressões livres.
-- Relações são armazenadas como IDs em JSONB; registros excluídos ou fora do quadro são ignorados no cálculo e na exibição, sem limpeza física automática dos IDs. Permissões globais continuam vigentes; isolamento granular deve anteceder uso multi-tenant.
-- Migração aditiva: `work_fields.config` e ampliação da restrição de tipos. Validar em banco separado antes do merge.
-- Testes unitários: `npm test` (Node.js). Testar também criação/edição no navegador, recarga, relações inválidas e atualização de valores após editar o quadro de destino.
+| Job | Cobertura |
+|---|---|
+| validation | Sintaxe JS, testes nativos Node.js e PostgreSQL 16 descartável |
+| browser | Chromium com Playwright e API simulada: navegação, filtros, paginação, seleção e Kanban |
+| dependency-audit | Auditoria de dependências de produção, bloqueio de vulnerabilidades altas |
 
-### Motor de automações v1
+Na revisão de código validada antes desta documentação, o GitHub Actions confirmou **47 testes aprovados, 0 falhas, 0 ignorados**, sucesso do teste Chromium e **0 vulnerabilidades reportadas** pela auditoria. [Evidência da execução](https://github.com/FortunatoE/Agend.a/actions/runs/45616436248). Isso não garante ausência de vulnerabilidades futuras nem substitui testes end-to-end com o banco real.
 
-Administradores podem criar, pausar, ativar e excluir regras na aba Automações de cada Board. Gatilhos: criação de registro ou mudança de campo editável. Condição opcional: status igual a um valor (somente mudança). Ações: alterar status, mover para grupo, criar registro no mesmo quadro ou notificar usuário ativo. O administrador autoriza a execução das ações por alterações realizadas por usuários com as permissões existentes; não há novas permissões granulares. Regras são avaliadas pelo snapshot da mudança original, em ordem de ID; alterações automáticas não disparam outras regras. Se várias regras alterarem o mesmo campo, prevalece a última. O trigger PostgreSQL registra sucesso/falha na mesma transação, isolando falhas de cada ação. Histórico recente: últimos 200 registros globalmente, visível a administradores. Não há fila, retry, cron, e-mail, webhook ou múltiplas ações por regra. A exclusão preserva o histórico da regra.
+### Testes locais
 
-Antes da publicação, valide em PostgreSQL de teste: instalação do trigger e constraints; criação, alteração sem mudança real, status condicional, pausa, falha isolada, ausência de cascata, exclusão e histórico, notificação e acesso não-admin. O preview não deve usar o banco de produção. As tabelas e o trigger são criados na primeira chamada autenticada a /api/workspaces.
+```bash
+npm test
+npm install --no-save --package-lock=false pg@8
+# Configure AGEND_TEST_DATABASE_URL somente para banco local agend_test
+npm test
+npm install --no-save --package-lock=false @playwright/test@1.56.1
+npx playwright install chromium
+npx playwright test e2e/board.spec.js --workers=1
+npm audit --omit=dev --audit-level=high
+```
 
-### Workflow Builder v1
+O teste PostgreSQL recusa URLs fora de localhost/127.0.0.1 com o nome de banco `agend_test`. Sem a variável, é ignorado. As verificações com banco usam fixture mínima e rollback; não devem ser executadas em banco de produção.
 
-Na aba Workflows, administradores criam fluxos por quadro com gatilho de criação ou alteração de campo editável. O editor permite até 10 etapas ordenadas, incluindo ações e decisões de status com caminhos Sim/Não (até 5 ações por caminho, 20 ações no total). Ações: alterar status, mover grupo, criar registro no próprio quadro e notificar usuário ativo. A condição lê o estado atual do registro, incluindo efeitos de etapas anteriores. Os gatilhos usam a mudança original; o trigger de automações simples roda antes do trigger de workflows, por ordem alfabética do PostgreSQL. Cada fluxo roda em uma subtransação: qualquer falha reverte todas as suas ações, preservando a alteração original e os demais fluxos. Alterações automáticas não disparam outros fluxos nem automações. Histórico preservado ao excluir o fluxo; últimos 200 registros globalmente para administradores. Não há espera, aprovação humana persistente, agendamento, editor de grafo livre, edição de fluxos publicados ou integração externa nesta versão.
+### Checklist de release
 
-Valide em banco de teste: instalação do trigger, execução ordenada, caminhos Sim/Não, pausa, falha após etapa bem-sucedida (rollback inclusive de notificações), ausência de recursão e coexistência com automações simples. Verifique também permissões, histórico e interface. A criação das tabelas e do trigger ocorre na primeira chamada autenticada de /api/workspaces.
+1. Verificar o commit exato, pipeline, auditoria e revisão de segurança.
+2. Confirmar projeto Vercel associado a `FortunatoE/Agend.a` e branch de produção `main`.
+3. Configurar Preview com banco separado e validar login, migrações, operações legadas, dados dinâmicos, permissões e integrações.
+4. Fazer backup do banco real; verificar o plano de migração e rollback.
+5. Publicar a revisão aprovada no projeto correto e verificar URL, logs e disponibilidade.
+6. Configurar destinos/agendador apenas se forem utilizados, com autorização e segredos apropriados.
 
-### Form Builder v1
+O merge no GitHub é uma atualização de código; **não é confirmação de deploy**. A produção precisa ter um projeto e banco autorizados.
 
-Administradores criam formulários por quadro, selecionam até 30 campos básicos e definem quais são obrigatórios, descrição e grupo de destino. O título do registro é obrigatório; texto, número, data, status e resposta Sim/Não são suportados. Campos calculados e relacionamentos não são aceitos nesta versão. Usuários autenticados com permissão de criação respondem pela aba Formulários ou por link interno `?form=ID`. Administradores podem pausar e reativar formulários; não há edição de definições publicadas nem acesso anônimo. A API valida a configuração, tipos, campos obrigatórios e grupo; um único comando SQL cria o registro e guarda o protocolo, autor e respostas originais. A chave UUID por usuário/formulário protege reenvios do mesmo formulário aberto (não deduplica respostas independentes). A criação de registro dispara os gatilhos de criação existentes; condições de workflows podem usar os valores enviados. Gatilhos de alteração não disparam no envio inicial. A resposta original permanece no histórico mesmo que o registro seja alterado ou excluído. Histórico administrativo: últimos 200 envios globalmente. A autorização ainda é global, não por formulário ou quadro.
+## Limitações e roadmap
 
-Validar em banco de teste: criação, pausa, links após login, permissão de criação, tipos inválidos, zero/falso obrigatórios, envio repetido/concomitante, atomicidade e integração com triggers de automação e workflow. Não usar o banco de produção para testes.
+- Paginação de rede, cache, carregamento por Board, retenção de eventos e testes de volume/concorrência.
+- Isolamento completo por organização, grupos de usuários e anexos em Boards dinâmicos.
+- Aprovações humanas, agendamento, edição de workflows/formulários publicados e canvas gráfico.
+- Dashboard com gráficos configuráveis e preferências sincronizadas entre dispositivos.
+- Upsert via planilha, conectores específicos Microsoft 365/e-mail e inteligência artificial.
+- Homologação completa com autenticação e banco reais em Preview; teste e monitoramento do ambiente publicado.
 
-### Advanced Visualization Engine v1
-
-- Calendário mensal em grade de 42 dias, com navegação, retorno ao mês atual e seleção do campo de data.
-- Gantt: seleção de início e fim (inclusive), duração em dias corridos, exclusão de períodos inválidos e avisos de conflito de predecessores por campo de relacionamento com o mesmo Board. Não há bloqueio, edição por arraste, caminho crítico ou reprogramação automática; filtros podem ocultar predecessores.
-- Carga de trabalho: agrupa pelo texto do responsável, com contagem ou esforço numérico, capacidade uniforme e opção de excluir concluídos. Esforço ausente ou inválido é contado à parte e tratado como zero. Não há cadastro de capacidade individual, disponibilidade temporal ou campo pessoa vinculado ao cadastro de usuários.
-- Dashboard configurável: até 20 KPIs de múltiplos Boards (total, concluídos, percentual, soma, média, mínimo e máximo). Busca filtra somente os indicadores do Board atual. O resumo automático permanece disponível em aba própria.
-- Preferências de campo e widgets são armazenadas por usuário e Board no localStorage do navegador, não sincronizadas no servidor; todos os dados respeitam a autorização global existente. Sem alteração no schema PostgreSQL.
-
-Testar navegação mensal, períodos longos, datas inválidas, avisos de dependência, sobrecarga, troca de Boards, persistência local, tema escuro e layout móvel. Os cálculos puros estão em dist/analytics-core.js e possuem testes em test/advanced-views.test.js.
-
-### Governance & Collaboration v1
-
-- Workspace e Board podem ser compartilhados ou restritos. Os compartilhados mantêm o acesso anterior; os restritos exigem membro explícito. A regra efetiva é o menor nível entre workspace e Board: Leitor, Editor, Gestor. Administradores mantêm acesso; permissões globais de criação/edição/exclusão continuam sendo um teto. Remover um perfil explícito em um escopo compartilhado restaura o padrão, não revoga acesso. Somente administradores alteram membros e visibilidade.
-- A API filtra Boards, campos, itens, grupos e formulários antes de entregar os dados e calcular Lookup/Rollup. Metadados e valores de relações para Boards inacessíveis são ocultados; escritas de relações também exigem acesso ao destino. A autorização de mutações é verificada novamente no SQL para a função de acesso ao Board. Não é RLS/multi-tenant; atividades legadas continuam com suas permissões globais e a revogação concorrente deve ser validada em integração.
-- Comentários por registro dinâmico, disponíveis para leitores com acesso. Menção opcional notifica um usuário autorizado; a notificação não contém título, conteúdo ou link sensível. Notificações de workflows/automações passam a exigir acesso do destinatário e usam texto genérico; mensagens dinâmicas antigas são sanitizadas na migração. Regras configuradas por administradores continuam executando dentro do próprio Board.
-- Auditoria administrativa de criação, edição, exclusão de registros, comentários e mudanças de visibilidade/membros, com autor quando originado pelas APIs, timestamp, ID e indicador automático. Não é histórico completo de valores nem trilha de todas as configurações; registros anteriores não são retroativamente auditados. Histórico recente limitado a 200 eventos globais; comentários a 100 por registro.
-- Entidades: work_workspace_members, work_board_members, work_audit, work_comments. Migração aditiva e upgrade dos triggers de automação/workflow. Escopos existentes e novos iniciam compartilhados para compatibilidade. Configurar restrições antes de inserir dados confidenciais. Grupos de usuários, anexos nos Boards dinâmicos, isolamento por organização e feed central completo continuam pendentes.
-
-Validação obrigatória em PostgreSQL separado: matriz leitor/editor/gestor/admin, revogação em ambos os escopos, acesso por ID direto, formulário por link, relações entre Boards restritos, notificações após revogação, auditoria de mutações e rollback, concorrência e compatibilidade de triggers. Não usar banco de produção. Os testes puros não validam a função SQL de acesso nem a migração.
-
-### Integration Engine v1 — CSV e homologação
-
-A aba Importar / Exportar permite que usuários com leitura exportem um CSV UTF-8 com BOM e separador ponto e vírgula, compatível com Excel. O arquivo contém título, grupo e campos autorizados (incluindo resultados calculados); relações exportam títulos visíveis. Strings com prefixos potencialmente interpretáveis como fórmulas são neutralizadas com apóstrofo. A exportação não inclui campos relacionados restritos, comentários ou histórico. Limite de 10 mil registros e 3,5 MB de CSV. Valores numéricos usam ponto decimal no arquivo; ao abrir no Excel, selecione a configuração regional adequada.
-
-Usuários com criação podem importar CSV/TSV (salvar planilha Excel como CSV UTF-8). Selecione delimitador, título, campos e grupo de destino, valide a prévia e confirme. São aceitos até 200 registros, 100 colunas e 500 mil caracteres por lote, campos de texto, número, data, Sim/Não e status. Datas DD/MM/AAAA ou ISO, números sem separador de milhares. Linhas em branco são ignoradas. Erros bloqueiam todo o lote; a prévia exibe até 10 registros e 100 erros. A importação só cria registros, não modifica nem deduplica registros existentes. A chave UUID evita repetição do mesmo lote enviado; alterar mapeamento ou abrir outra sessão cria uma nova importação. O lote e seus registros são gravados na mesma instrução SQL. Gatilhos de criação existentes executam por registro; podem gerar registros adicionais. O histórico mostra os últimos 50 lotes (administradores veem todos do Board, demais usuários apenas os próprios). Acesso revalidado na API. Arquivos .xlsx, API com chaves, webhooks, e-mail e Microsoft 365 ainda não estão disponíveis.
-
-Homologação: workflow GitHub Actions `Work OS validation` configura Node 22 e PostgreSQL 16 descartável e executa `npm test` e verificação de sintaxe. O teste `test/postgres-integration.test.js` usa as migrações reais dos módulos e uma estrutura mínima de tabelas de teste, verifica permissões, importação, reenvio, auditoria, triggers e rollback. Ele exige `AGEND_TEST_DATABASE_URL` apontando exclusivamente para `localhost`/`127.0.0.1` e banco `agend_test`, com dependência pg instalada; sem variável, é ignorado. Não representa teste end-to-end do servidor Vercel ou do navegador. Validar separadamente UI, autenticação, revogação concorrente, importação e exportação em ambiente de preview com banco isolado.
-
-### Integration Engine v2 — API REST e credenciais
-
-Administradores geram credenciais na aba API e integrações do Board. Cada chave tem um único Board, um usuário responsável, escopo read ou read_create e validade de 1 a 90 dias. Token aleatório de 256 bits, mostrado apenas na criação, persistido somente como SHA-256 e prefixo. Revogação permanente; remoção do acesso ou desativação do usuário bloqueia requisições enquanto a restrição existir. Reativação do acesso pode restaurar uma chave ainda válida e não revogada. O uso deve ocorrer via HTTPS e cabeçalho Authorization: Bearer, nunca pela URL, código público ou logs. Não há autenticação por cookies nessa modalidade.
-
-- GET /api/workspaces?limit=100&after=0: metadados do Board, grupos, campos básicos e registros ordenados por ID. Continue com next_after até null. Limite de 1 a 100 por página. Resposta superior a 3,5 MB recebe 413; reduza limit. Não inclui relações, campos calculados ou dados de outros Boards.
-- POST /api/workspaces: JSON com title, request_id UUID v4, values (objeto chaveado pelo ID de cada campo básico) e group_id opcional. Requer read_create e permissão de criação do responsável. Criação dispara automações e workflows existentes. Reenvio do mesmo request_id por chave retorna o ID original, mesmo após exclusão do registro; não reprocessa. Não implementa atualização, exclusão ou upsert.
-- Limite de 60 requisições autenticadas por minuto por chave, janela fixa; HTTP 429 e Retry-After: 60. Não é rate limiting por IP nem proteção global contra DDoS. Logs recentes (100 por Board) registram método e status de requisições autenticadas após a admissão no limite, sem token ou conteúdo. Tentativas inválidas, expiradas, revogadas e rejeitadas pelo rate limit não são registradas nessa tabela; falhas de gravação do log não interrompem a operação.
-- As chaves, requisições idempotentes e logs são persistidos nas tabelas work_api_keys, work_api_requests e work_api_logs. A migração ocorre na primeira chamada autenticada por sessão à API; crie a chave pela interface antes de utilizar a integração. O teste PostgreSQL existente foi ampliado para validar emissão, leitura, criação, replay, rate limit, revogação e remoção de acesso. Não há suporte a XLSX nativo, webhooks, retries automáticos ou integração Microsoft 365 nesta versão.
-
-### Integration Engine v3 — sincronização e eventos
-
-- Novo escopo explícito read_write: administradores podem gerar chaves para usuários com criação e edição no Board. Chaves antigas não adquirem esse escopo automaticamente. POST permanece disponível para criação convencional com read_create ou read_write; PATCH exige read_write e as duas permissões globais (ou admin).
-- PATCH /api/workspaces: JSON com external_id (texto de 1 a 120 caracteres, sem controles, único por Board), title, request_id UUID v4, values por ID de campo básico e group_id opcional. Cria se o identificador não existe; atualiza se existe. Título é obrigatório; valores omitidos são preservados, null explícito limpa o campo, grupo omitido é preservado e group_id:null remove o grupo. Não associa automaticamente registros anteriores sem external_id. Em caso de exclusão, novo request_id pode recriar o identificador. IDs externos são sensíveis a maiúsculas/minúsculas; diferentes sistemas devem adotar prefixos próprios. Reenvie o mesmo request_id após erro de rede; use um novo UUID para nova atualização. Idempotência de PATCH é independente de POST e guarda o ID original, não o conteúdo da requisição.
-- GET /api/workspaces?events=1&after=0&limit=100: feed de alterações, com cursor textual bigint por Board, event (created/updated/deleted), item_id e created_at. next_after permite retomar a leitura; has_more sinaliza paginação. O consumidor só deve avançar seu cursor após processar a página, com deduplicação por Board e cursor. Eventos de alterações automáticas também são capturados. O feed começa na instalação do trigger; não é retroativo nem contém dados anteriores/posteriores dos registros. Para obter o estado atual, consultar o endpoint de registros; não é uma réplica histórica completa. A fila é persistente e transacional, com contador serializado por Board; não há retenção automática ainda.
-- Webhooks HTTP de saída, entregas automáticas, scheduler e retry de entregas não foram implementados. O feed permite consulta e reprocessamento pelo consumidor, sem chamadas a URLs externas. Em caso de 429 ou erro transitório, o cliente deve aplicar espera e retry com o mesmo UUID/cursor. Limite de 60/min permanece. Não há exportação XLSX ou upsert via CSV nesta versão.
-- Migração: external_id em work_items, novo índice único, escopo read_write e tabelas work_sync_requests, work_event_counters e work_sync_events. O trigger de captura registra mudanças reais, inclusive as feitas pelos motores existentes. A serialização por Board pode aumentar contenção; testes de carga/concorrência e eventual política de retenção são necessários antes da implantação.
-- Testes: validação do identificador externo, cursor, permissões, criação/atualização, preservação de grupo, reenvio e paginação de eventos. A suíte PostgreSQL é executada em banco descartável pelo GitHub Actions, sem acessar a produção.
-
-### Consolidação da agend.a 2.0 — experiência, Excel, webhooks e homologação
-
-**Boards.** Navegação separada por visualizações, operações e administração. Pesquisa sem acentos em título, ID externo e campos básicos autorizados; filtros combinados de grupo/status, ordenação e paginação local (25/50/100). Seleção de até 100 registros para movimentação de grupo, alteração do primeiro campo de status ou exclusão, com confirmação e validação integral da seleção no SQL. Kanban aceita arraste em desktop e mantém seletor de status como alternativa. Modelos de Projetos, Rotinas operacionais e Solicitações criam Board, campos e grupos em uma única instrução SQL, sem registros ou automações pré-configurados. Apenas administradores criam modelos. Preferências de filtro ficam em memória da sessão. As consultas passam a filtrar Boards, grupos, campos e itens autorizados no SQL e a renderização legada monta somente a tela ativa; não é paginação de rede dos Boards internos. Ainda são necessários testes de volume, cache e carregamento por Board.
-
-**Excel nativo.** Importação XLSX usa a primeira aba, com cabeçalho, até 200 registros, 100 colunas, 1,5 MB compactados e 12 MB descompactados. Rejeita fórmulas, células especiais, arquivos protegidos e objetos incorporados; cole valores previamente. O servidor converte para CSV intermediário e reutiliza a validação/mapeamento. Exportação XLSX preserva números, booleanos e datas básicas, com cabeçalho verde, filtro e primeira linha congelada; limite de 5 mil registros, 100 campos e 2,5 MB. A exportação mantém autorização e ocultação de vínculos restritos. Não implementa atualização por chave via planilha; use PATCH da API para isso.
-
-**Webhooks.** A configuração de infraestrutura usa AGEND_WEBHOOK_DESTINATIONS (JSON objeto alias -> {url,secret}, HTTPS, segredo com pelo menos 32 caracteres). Não incluir valores reais no Git. Somente o operador de infraestrutura deve definir destinos confiáveis e garantir DNS/egress seguro; a interface não aceita URLs arbitrárias. Administradores vinculam aliases ao Board, com cursor inicial na última sequência disponível (sem entrega retroativa). O evento contém apenas Board, item, tipo, cursor e timestamp; assinatura HMAC-SHA256 de timestamp + ponto + corpo, cabeçalhos X-Agend-Delivery, X-Agend-Timestamp e X-Agend-Signature. O receptor deve validar assinatura e deduplicar pelo ID de entrega. Redirecionamentos são bloqueados; timeout de 5 segundos. Uma tentativa reivindica o evento com lease de 60 segundos, avança o cursor somente após 2xx e reprograma falhas em 1, 2, 4, 8 minutos; após a quinta falha bloqueia a inscrição. Administradores podem pausar, retomar, liberar nova tentativa e processar manualmente um evento. Entrega é pelo menos uma vez (pode duplicar após perda de resposta ou expiração de lease); não é exatamente uma vez. Logs não guardam payload ou segredo. Para processamento automático, um agendador externo deve chamar POST /api/workspaces?worker=webhooks com Authorization: Bearer e AGEND_WEBHOOK_WORKER_SECRET (segredo separado de pelo menos 32 caracteres). Cada chamada processa até um evento; não há agendador ativado por padrão, nem destinos reais configurados. A política de retenção e testes de carga são pendentes.
-
-**Homologação.** A pipeline inclui testes nativos com PostgreSQL 16 local descartável, teste Chromium com API simulada e auditoria de dependências de produção. Runner fixado em Ubuntu 24.04 para compatibilidade. As novas suítes incluem filtros, paginação, bulk, templates, workbook XLSX, assinatura e lease/retry de webhooks. O teste de navegador cobre navegação, pesquisa, paginação, seleção e Kanban, não todos os fluxos com banco real. Não publicar antes de confirmar a pipeline final, revisar dependências, concorrência e isolamento de dados; criar preview com banco separado e validar login, migrações, permissões e operações completas. Não houve merge ou deploy nesta etapa.
+O repositório mantém a implementação incremental, as regras de domínio testáveis e os diagramas versionados. Consulte [Pull Request #1](https://github.com/FortunatoE/Agend.a/pull/1) e [GitHub Actions](https://github.com/FortunatoE/Agend.a/actions) para histórico e resultados.
