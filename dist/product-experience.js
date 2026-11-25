@@ -37,9 +37,13 @@ const uiPaths={
 };
 function uiIcon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','ui-icon');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.innerHTML=uiPaths[name]||uiPaths.info;return svg}
 function uiDecorate(b,icon,label=b.textContent){b.replaceChildren(uiIcon(icon),node('span',label));return b}
+function uiButtonIcon(label){
+ const exact={'Tabela':'table','Kanban':'kanban','Calendário':'calendar','Gantt':'chart','Carga':'user','Resumo':'chart','Dashboard':'dashboard','Formulários':'form','Importar / Exportar':'download','Automações':'workflow','Workflows':'workflow','Acesso e auditoria':'shield','API e integrações':'key','Comentários':'message','Editar nome':'edit','Excluir':'trash','Excluir selecionados':'trash','Exportar CSV':'download','Exportar Excel (.xlsx)':'download','Importar registros':'upload','Fechar':'x','Usar modelo':'folders'};
+ return exact[label]||(label.startsWith('+ ')?'plus':null);
+}
 function uiIconOnly(b,icon,label){b.replaceChildren(uiIcon(icon));b.title=label;b.setAttribute('aria-label',label);return b}
 const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',settings:'settings'};
-let uiToastTimer,uiTaskFilter='all',uiReturnFocus=null,uiDialog=null;
+let uiToastTimer,uiTaskFilter='all',uiReturnFocus=null,uiDialog=null,uiLastFocus=null;
 function uiToast(message,kind='info'){
  const host=$('#toast');clearTimeout(uiToastTimer);host.replaceChildren(uiIcon(kind==='error'?'alert':kind==='success'?'check':'info'),node('span',String(message)));
  host.classList.toggle('ui-error',kind==='error');host.setAttribute('role',kind==='error'?'alert':'status');host.setAttribute('aria-live',kind==='error'?'assertive':'polite');
@@ -76,12 +80,13 @@ function uiInit(){
  for(const b of nav.querySelectorAll('button[data-view]')){const title=b.textContent;uiDecorate(b,uiNav[b.dataset.view],title);b.lastChild.className='ui-nav-text';b.setAttribute('aria-label',title);b.title=title}
  for(const [id,label] of [['overview','Início'],['workspaces','Espaços de trabalho'],['table','Atividades'],['routines','Gestão']])nav.insertBefore(node('div',label,'ui-nav-label'),nav.querySelector('[data-view="'+id+'"]'));
  uiIconOnly($('#password'),'key','Alterar senha');uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
- const pass=$('#loginPassword'),wrap=node('div',undefined,'ui-password-row');pass.replaceWith(wrap);wrap.append(pass);const show=wsButton('',()=>{const visible=pass.type==='password';pass.type=visible?'text':'password';uiIconOnly(show,'eye',visible?'Ocultar senha':'Mostrar senha');show.setAttribute('aria-pressed',String(visible))},'ui-password-toggle');uiIconOnly(show,'eye','Mostrar senha');show.setAttribute('aria-pressed','false');wrap.append(show);
+ const pass=$('#loginPassword'),wrap=node('span',undefined,'ui-password-row');pass.replaceWith(wrap);wrap.append(pass);const show=wsButton('',()=>{const visible=pass.type==='password';pass.type=visible?'text':'password';uiIconOnly(show,'eye',visible?'Ocultar senha':'Mostrar senha');show.setAttribute('aria-pressed',String(visible))},'ui-password-toggle');uiIconOnly(show,'eye','Mostrar senha');show.setAttribute('aria-pressed','false');wrap.append(show);
  $('#loginError').setAttribute('role','alert');
  const modal=$('#modal'),app=$('#app');
+ document.addEventListener('focusin',e=>{if(!modal.contains(e.target)&&e.target!==document.body)uiLastFocus=e.target});
  const observer=new MutationObserver(()=>{
  const d=modal.classList.contains('open')?modal.querySelector('.dialog'):null;
- if(d&&d!==uiDialog){if(!uiDialog)uiReturnFocus=document.activeElement;uiDialog=d;d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');d.tabIndex=-1;const heading=d.querySelector('h2,h3');if(heading){heading.id='ui-dialog-title';d.setAttribute('aria-labelledby',heading.id)}else d.setAttribute('aria-label','Janela de diálogo');app.inert=true;$('#loginScreen').inert=true;if(!d.contains(document.activeElement))(d.querySelector('input:not([type=hidden]),select,textarea,button')||d).focus()}
+ if(d&&d!==uiDialog){if(!uiDialog)uiReturnFocus=uiLastFocus;uiDialog=d;d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');d.tabIndex=-1;const heading=d.querySelector('h2,h3');if(heading){heading.id='ui-dialog-title';d.setAttribute('aria-labelledby',heading.id)}else d.setAttribute('aria-label','Janela de diálogo');app.inert=true;$('#loginScreen').inert=true;if(!d.contains(document.activeElement))(d.querySelector('input:not([type=hidden]),select,textarea,button')||d).focus()}
  else if(!d&&uiDialog){uiDialog=null;app.inert=false;$('#loginScreen').inert=false;if(uiReturnFocus?.isConnected)uiReturnFocus.focus();uiReturnFocus=null;modal.classList.remove('ui-drawer')}
  });observer.observe(modal,{attributes:true,attributeFilter:['class'],childList:true});
  document.addEventListener('keydown',e=>{
