@@ -1,9 +1,11 @@
 /* Legacy task calendar and Kanban — separate from dynamic Boards. */
 let taskCalendarAnchor=null,taskDragId=null,taskMovePending=false;
 function legacyCalendar(){
+ if(calendarMode==='equipe'&&current?.is_admin)return teamCalendar();
+ if(calendarMode==='equipe')calendarMode='mensal';
  const D=AgendaDates,host=$('#calendar'),now=D.today();taskCalendarAnchor=taskCalendarAnchor||now;
  const anchor=taskCalendarAnchor,{byDay,missing}=D.index(scoped()),tabs=node('div',undefined,'tabs'),panel=node('div',undefined,'panel'),toolbar=node('div',undefined,'tc-toolbar');
- const modes=[['anual','Anual'],['mensal','Mensal'],['semanal','Semanal'],['diário','Diário']];
+ const modes=[...(current?.is_admin?[['equipe','Equipe · mensal']]:[]),['anual','Anual'],['mensal','Mensal'],['semanal','Semanal'],['diário','Diário']];
  for(const [m,label] of modes)tabs.append(wsButton(label,()=>setCalendar(m),'tab '+(m===calendarMode?'active':'')));
  const nav=(delta)=>{taskCalendarAnchor=D.shift(anchor,calendarMode,delta);legacyCalendar()};
  const prev=wsButton('‹',()=>nav(-1)),next=wsButton('›',()=>nav(1));prev.setAttribute('aria-label','Período anterior');next.setAttribute('aria-label','Próximo período');
