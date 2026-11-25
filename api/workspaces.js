@@ -2,6 +2,8 @@ const {session,body,allowed,unauth,forbidden}=require('./_core');
 const {computeItems,validateConfig}=require('../lib/work-calculations');
 const {ensureAutomations}=require('../lib/work-automation-db');
 const {normalizeRule}=require('../lib/work-automation-rules');
+const {ensureWorkflows}=require('../lib/work-workflow-db');
+const {normalizeWorkflow}=require('../lib/work-workflow-rules');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -27,12 +29,35 @@ module.exports=async(req,res)=>{
  END;
  $migration$`);
  await ensureAutomations(sql);
+ await ensureWorkflows(sql);
  if(req.method==='GET'){
  const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
- return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups,automations,automationRuns});
+ const [workflows,workflowRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_workflows ORDER BY id'),sql.query('SELECT * FROM work_workflow_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
+ return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups,automations,automationRuns,workflows,workflowRuns});
  }
  const d=body(req);const action=d.action;
+ if(action==='workflow'){
+ if(!user.is_admin)return forbidden(res);
+ if(req.method==='POST'){
+ const board=id(d.board_id);
+ if(!board||!(await sql.query('SELECT id FROM work_boards WHERE id=$1',[board])).length)return res.status(400).json({error:'Quadro inválido.'});
+ const [fields,groups,users]=await Promise.all([sql.query('SELECT id,board_id,type FROM work_fields WHERE board_id=$1',[board]),sql.query('SELECT id,board_id FROM work_groups WHERE board_id=$1',[board]),sql.query('SELECT id FROM app_users WHERE active')]);
+ let flow;try{flow=normalizeWorkflow(d,board,fields,groups,users)}catch(e){return res.status(400).json({error:e.message})}
+ const result=await sql.query('INSERT INTO work_workflows(board_id,name,trigger_config,steps,created_by) VALUES($1,$2,$3::jsonb,$4::jsonb,$5) RETURNING *',[board,flow.name,JSON.stringify(flow.trigger),JSON.stringify(flow.steps),user.id]);
+ return res.status(201).json(result[0]);
+ }
+ if(req.method==='PATCH'){
+ if(!id(d.id)||typeof d.enabled!=='boolean')return res.status(400).json({error:'Fluxo ou estado inválido.'});
+ const result=await sql.query('UPDATE work_workflows SET enabled=$1 WHERE id=$2 RETURNING *',[d.enabled,id(d.id)]);
+ return result.length?res.status(200).json(result[0]):res.status(404).json({error:'Fluxo não encontrado.'});
+ }
+ if(req.method==='DELETE'){
+ if(!id(d.id))return res.status(400).json({error:'Fluxo inválido.'});
+ await sql.query('DELETE FROM work_workflows WHERE id=$1',[id(d.id)]);return res.status(200).json({ok:true});
+ }
+ return res.status(405).end();
+ }
  if(action==='automation'){
  if(!user.is_admin)return forbidden(res);
  if(req.method==='POST'){
