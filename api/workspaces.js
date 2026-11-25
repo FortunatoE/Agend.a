@@ -99,7 +99,7 @@ module.exports=async(req,res)=>{
  const fields=await sql.query('SELECT * FROM work_fields WHERE board_id=$1',[form.board_id]);
  let response;try{response=validateResponse(form,d,fields)}catch(e){return res.status(400).json({error:e.message})}
  try{
- const result=await sql.query(`WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::text,true)), live_form AS (SELECT f.id,f.board_id,f.group_id FROM work_forms f CROSS JOIN actor WHERE f.id=$1 AND f.enabled AND work_board_role($2,f.board_id)>=2 FOR SHARE OF f),
+ const result=await sql.query(`WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::int::text,true)), live_form AS (SELECT f.id,f.board_id,f.group_id FROM work_forms f CROSS JOIN actor WHERE f.id=$1 AND f.enabled AND work_board_role($2,f.board_id)>=2 FOR SHARE OF f),
  new_item AS (INSERT INTO work_items(board_id,group_id,title,values) SELECT board_id,group_id,$4,$5::jsonb FROM live_form RETURNING id,board_id)
  INSERT INTO work_form_submissions(form_id,board_id,item_id,submitted_by,request_id,title,answers)
  SELECT $1,board_id,id,$2,$3::uuid,$4,$5::jsonb FROM new_item RETURNING id,item_id`,[...params,response.title,JSON.stringify(response.values)]);
@@ -183,7 +183,7 @@ module.exports=async(req,res)=>{
  else if(action==='group'){if(!user.is_admin)return forbidden(res);rows=await sql.query('INSERT INTO work_groups(board_id,name) VALUES($1,$2) RETURNING *',[id(d.board_id),name]);}
  else if(action==='item'){
  if(!await permitted(id(d.board_id),'create'))return forbidden(res);
- rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::text,true)) INSERT INTO work_items(board_id,title) SELECT $1,$2 FROM actor WHERE work_board_role($3,$1)>=2 RETURNING id",[id(d.board_id),name,user.id]);
+ rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::int::text,true)) INSERT INTO work_items(board_id,title) SELECT $1,$2 FROM actor WHERE work_board_role($3,$1)>=2 RETURNING id",[id(d.board_id),name,user.id]);
  if(!rows.length)return forbidden(res);
  }
  else return res.status(400).json({error:'Ação inválida.'});
@@ -196,9 +196,9 @@ module.exports=async(req,res)=>{
  if(action==='group_move'){
  const group=d.group_id===null?null:id(d.group_id);
  if(d.group_id!==null&&(!group||!(await sql.query('SELECT id FROM work_groups WHERE id=$1 AND board_id=$2',[group,item.board_id])).length))return res.status(400).json({error:'Grupo inválido para este quadro.'});
- const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::text,true)) UPDATE work_items SET group_id=$1 FROM actor WHERE id=$2 AND work_board_role($3,board_id)>=2 RETURNING id",[group,item.id,user.id]);return rows.length?res.status(200).json(rows[0]):forbidden(res);
+ const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::int::text,true)) UPDATE work_items SET group_id=$1 FROM actor WHERE id=$2 AND work_board_role($3,board_id)>=2 RETURNING id",[group,item.id,user.id]);return rows.length?res.status(200).json(rows[0]):forbidden(res);
  }
- if(action==='rename'){const title=clean(d.name);if(!title)return res.status(400).json({error:'Informe um nome.'});const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::text,true)) UPDATE work_items SET title=$1 FROM actor WHERE id=$2 AND work_board_role($3,board_id)>=2 RETURNING id",[title,item.id,user.id]);return rows.length?res.status(200).json(rows[0]):forbidden(res);}
+ if(action==='rename'){const title=clean(d.name);if(!title)return res.status(400).json({error:'Informe um nome.'});const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$3::int::text,true)) UPDATE work_items SET title=$1 FROM actor WHERE id=$2 AND work_board_role($3,board_id)>=2 RETURNING id",[title,item.id,user.id]);return rows.length?res.status(200).json(rows[0]):forbidden(res);}
  if(action!=='value')return res.status(400).json({error:'Ação inválida.'});
  const field=(await sql.query('SELECT * FROM work_fields WHERE id=$1 AND board_id=$2',[id(d.field_id),item.board_id]))[0];
  if(!field)return res.status(404).json({error:'Campo não encontrado.'});
@@ -219,12 +219,12 @@ module.exports=async(req,res)=>{
  if(field.type==='date')valid=typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&!isNaN(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
  }
  if(!valid)return res.status(400).json({error:'Valor incompatível com o campo.'});
- const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$4::text,true)) UPDATE work_items SET values=jsonb_set(values,ARRAY[$1::text],$2::jsonb,true) FROM actor WHERE id=$3 AND work_board_role($4,board_id)>=2 AND ($5::int IS NULL OR work_board_role($4,$5)>0) RETURNING id",[String(field.id),JSON.stringify(v),item.id,user.id,field.type==='relation'?field.config.target_board_id:null]);return rows.length?res.status(200).json(rows[0]):forbidden(res);
+ const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$4::int::text,true)) UPDATE work_items SET values=jsonb_set(values,ARRAY[$1::text],$2::jsonb,true) FROM actor WHERE id=$3 AND work_board_role($4,board_id)>=2 AND ($5::int IS NULL OR work_board_role($4,$5)>0) RETURNING id",[String(field.id),JSON.stringify(v),item.id,user.id,field.type==='relation'?field.config.target_board_id:null]);return rows.length?res.status(200).json(rows[0]):forbidden(res);
  }
  if(req.method==='DELETE'){
  if(!allowed(user,'delete'))return forbidden(res);
  if(action!=='item')return res.status(400).json({error:'Ação inválida.'});
- const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::text,true)) DELETE FROM work_items USING actor WHERE id=$1 AND work_board_role($2,board_id)>=3 RETURNING id",[id(d.id),user.id]);return rows.length?res.status(200).json({ok:true}):forbidden(res);
+ const rows=await sql.query("WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::int::text,true)) DELETE FROM work_items USING actor WHERE id=$1 AND work_board_role($2,board_id)>=3 RETURNING id",[id(d.id),user.id]);return rows.length?res.status(200).json({ok:true}):forbidden(res);
  }
  res.setHeader('Allow','GET,POST,PATCH,DELETE');return res.status(405).end();
  }catch(e){console.error(e);return res.status(['23505','23503','23502'].includes(e.code)?400:500).json({error:'Não foi possível concluir a operação no quadro.'});}
