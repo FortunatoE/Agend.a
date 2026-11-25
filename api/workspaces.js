@@ -13,6 +13,7 @@ const exchange=require('../dist/exchange-core');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {templates,normalizeBulk,bulkWrite,createTemplate}=require('../lib/work-board-ops');
+const {decodeWorkbook,encodeWorkbook}=require('../lib/work-xlsx');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -98,9 +99,18 @@ module.exports=async(req,res)=>{
  if(currentItems.length>10000)return res.status(400).json({error:'Exportação limitada a 10 mil registros.'});
  const groups=await sql.query('SELECT id,name FROM work_groups WHERE board_id=$1 AND work_board_role($2,board_id)>0',[bid,user.id]);
  const titles=new Map(safe.items.map(i=>[i.id,i.title])),groupNames=new Map(groups.map(g=>[g.id,g.name]));
- const csv=exchange.encodeCSV(['Título','Grupo',...selected.map(f=>f.name)],currentItems.map(i=>[i.title,groupNames.get(i.group_id)||'',...selected.map(f=>f.type==='relation'?(i.values?.[f.id]||[]).map(k=>titles.get(k)).filter(Boolean):i.values?.[f.id])]));
+ const headers=['Título','Grupo',...selected.map(f=>f.name)],rows=currentItems.map(i=>[i.title,groupNames.get(i.group_id)||'',...selected.map(f=>f.type==='relation'?(i.values?.[f.id]||[]).map(k=>titles.get(k)).filter(Boolean):i.values?.[f.id])]);
+ if(d.format==='xlsx'){
+ if(currentItems.length>5000||headers.length>102)return res.status(400).json({error:'XLSX limitado a 5 mil registros e 100 campos.'});
+ try{const xlsx=await encodeWorkbook(headers,rows,selected.map((f,i)=>f.type==='date'?i+2:-1).filter(i=>i>=0));return res.status(200).json({xlsx,count:currentItems.length})}catch(e){return res.status(400).json({error:e.message})}
+ }
+ const csv=exchange.encodeCSV(headers,rows);
  if(Buffer.byteLength(csv,'utf8')>3500000)return res.status(400).json({error:'Exportação excede o tamanho permitido.'});
  return res.status(200).json({csv,count:currentItems.length});
+ }
+ if(d.mode==='decode_xlsx'){
+ if(!await permitted(bid,'create'))return forbidden(res);
+ try{return res.status(200).json({csv:await decodeWorkbook(d.xlsx)})}catch(e){return res.status(400).json({error:e.message})}
  }
  if(!['preview','import'].includes(d.mode))return res.status(400).json({error:'Modo inválido.'});
  if(!await permitted(bid,'create'))return forbidden(res);
