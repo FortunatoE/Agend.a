@@ -12,6 +12,7 @@ const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const exchange=require('../dist/exchange-core');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
+const {templates,normalizeBulk,bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -47,7 +48,7 @@ module.exports=async(req,res)=>{
  await ensureSync(sql);
  await ensureEvents(sql);
  if(req.method==='GET'){
- let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
+ let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+(t==='workspaces'?' WHERE $1::int IS NOT NULL':t==='work_boards'?' WHERE work_board_role($1,id)>0':' WHERE work_board_role($1,board_id)>0')+' ORDER BY id',[user.id])));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
  const [workflows,workflowRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_workflows ORDER BY id'),sql.query('SELECT * FROM work_workflow_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
  let forms=await sql.query(user.is_admin?'SELECT * FROM work_forms ORDER BY id':'SELECT id,board_id,name,description,fields,group_id,enabled FROM work_forms WHERE enabled ORDER BY id');
@@ -63,6 +64,20 @@ module.exports=async(req,res)=>{
  }
  const d=body(req);const action=d.action;
  const permitted=async(bid,verb)=>canBoard(user,await getBoardRole(sql,user,bid),verb);
+ if(action==='bulk'){
+ if(req.method!=='PATCH')return res.status(405).end();
+ const bid=id(d.board_id);let config;try{config=normalizeBulk(d)}catch(e){return res.status(400).json({error:e.message})}
+ if(!bid||!await permitted(bid,config.mode==='delete'?'delete':'edit'))return forbidden(res);
+ const count=await bulkWrite(sql,user.id,bid,config);
+ return count===config.ids.length?res.status(200).json({count}):res.status(409).json({error:'Seleção inválida ou alterada; nenhum registro foi modificado.'});
+ }
+ if(action==='template'){
+ if(req.method!=='POST')return res.status(405).end();
+ if(!user.is_admin)return forbidden(res);
+ const workspace=id(d.workspace_id),name=clean(d.name);
+ if(!workspace||!name||!Object.hasOwn(templates,d.template)||!(await sql.query('SELECT id FROM workspaces WHERE id=$1',[workspace])).length)return res.status(400).json({error:'Ambiente, nome ou modelo inválido.'});
+ return res.status(201).json(await createTemplate(sql,workspace,name,d.template));
+ }
  if(action==='api_keys')return await manageKeys(sql,user,d,req.method,res);
  if(action==='exchange'){
  if(req.method!=='POST')return res.status(405).end();
