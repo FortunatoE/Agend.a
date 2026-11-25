@@ -8,6 +8,8 @@ const {ensureForms}=require('../lib/work-form-db');
 const {normalizeForm,validateResponse}=require('../lib/work-form-rules');
 const {ensureGovernance,getBoardRole,roleNumber}=require('../lib/work-governance-db');
 const {canBoard,redactRestrictedFields}=require('../lib/work-access');
+const {ensureExchange}=require('../lib/work-exchange-db');
+const exchange=require('../dist/exchange-core');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -36,6 +38,7 @@ module.exports=async(req,res)=>{
  await ensureAutomations(sql);
  await ensureWorkflows(sql);
  await ensureForms(sql);
+ await ensureExchange(sql);
  if(req.method==='GET'){
  let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
@@ -53,6 +56,51 @@ module.exports=async(req,res)=>{
  }
  const d=body(req);const action=d.action;
  const permitted=async(bid,verb)=>canBoard(user,await getBoardRole(sql,user,bid),verb);
+ if(action==='exchange'){
+ if(req.method!=='POST')return res.status(405).end();
+ const bid=id(d.board_id);
+ if(!bid||!await permitted(bid,'read'))return forbidden(res);
+ if(d.mode==='history'){
+ const rows=await sql.query('SELECT r.id,r.row_count,r.created_at,u.name AS actor FROM work_import_runs r LEFT JOIN app_users u ON u.id=r.user_id WHERE r.board_id=$1 AND work_board_role($2,$1)>0 AND ($3::boolean OR r.user_id=$2) ORDER BY r.id DESC LIMIT 50',[bid,user.id,Boolean(user.is_admin)]);
+ return res.status(200).json({runs:rows});
+ }
+ if(d.mode==='export'){
+ const fields=await sql.query('SELECT f.* FROM work_fields f WHERE work_board_role($1,f.board_id)>0 ORDER BY f.id',[user.id]);
+ const visibleRows=await sql.query('SELECT id FROM work_boards WHERE work_board_role($1,id)>0',[user.id]);
+ const visible=new Set(visibleRows.map(b=>b.id));if(!visible.has(bid))return forbidden(res);
+ const items=await sql.query('SELECT i.* FROM work_items i WHERE work_board_role($1,i.board_id)>0 ORDER BY i.id',[user.id]);
+ const safe=redactRestrictedFields(fields,computeItems(items,fields),visible);
+ const selected=safe.fields.filter(f=>f.board_id===bid&&!f.config?.restricted);
+ const currentItems=safe.items.filter(i=>i.board_id===bid);
+ if(currentItems.length>10000)return res.status(400).json({error:'Exportação limitada a 10 mil registros.'});
+ const groups=await sql.query('SELECT id,name FROM work_groups WHERE board_id=$1 AND work_board_role($2,board_id)>0',[bid,user.id]);
+ const titles=new Map(safe.items.map(i=>[i.id,i.title])),groupNames=new Map(groups.map(g=>[g.id,g.name]));
+ const csv=exchange.encodeCSV(['Título','Grupo',...selected.map(f=>f.name)],currentItems.map(i=>[i.title,groupNames.get(i.group_id)||'',...selected.map(f=>f.type==='relation'?(i.values?.[f.id]||[]).map(k=>titles.get(k)).filter(Boolean):i.values?.[f.id])]));
+ if(Buffer.byteLength(csv,'utf8')>3500000)return res.status(400).json({error:'Exportação excede o tamanho permitido.'});
+ return res.status(200).json({csv,count:currentItems.length});
+ }
+ if(!['preview','import'].includes(d.mode))return res.status(400).json({error:'Modo inválido.'});
+ if(!await permitted(bid,'create'))return forbidden(res);
+ const fields=await sql.query('SELECT * FROM work_fields WHERE board_id=$1',[bid]);
+ let prepared;try{prepared=exchange.prepare(d.csv,d.delimiter,d.mapping,fields)}catch(e){return res.status(400).json({error:e.message})}
+ if(d.mode==='preview')return res.status(200).json({count:prepared.records.length,preview:prepared.records.slice(0,10),errors:prepared.errors.slice(0,100),errorCount:prepared.errors.length});
+ if(prepared.errors.length||!prepared.records.length)return res.status(400).json({error:'Corrija os erros e inclua pelo menos um registro.'});
+ if(typeof d.request_id!=='string'||!(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(d.request_id)))return res.status(400).json({error:'Identificação de importação inválida.'});
+ const group=d.group_id==null?null:id(d.group_id);
+ if(d.group_id!=null&&(!group||!(await sql.query('SELECT id FROM work_groups WHERE id=$1 AND board_id=$2',[group,bid])).length))return res.status(400).json({error:'Grupo inválido.'});
+ const args=[bid,user.id,d.request_id,prepared.records.length,JSON.stringify(prepared.records),group];
+ const result=await sql.query(`WITH actor AS MATERIALIZED (SELECT set_config('agenda.actor_id',$2::int::text,true)),
+ reserved AS (INSERT INTO work_import_runs(board_id,user_id,request_id,row_count)
+ SELECT $1,$2,$3::uuid,$4 FROM actor WHERE work_board_role($2,$1)>=2
+ ON CONFLICT(board_id,user_id,request_id) DO NOTHING RETURNING id,row_count),
+ inserted AS (INSERT INTO work_items(board_id,group_id,title,values)
+ SELECT $1,$6,r.title,r.values FROM reserved CROSS JOIN jsonb_to_recordset($5::jsonb) AS r(title text,values jsonb) RETURNING id)
+ SELECT reserved.id,reserved.row_count,(SELECT count(*)::int FROM inserted) AS inserted FROM reserved`,args);
+ if(result.length)return res.status(201).json(result[0]);
+ if(!await permitted(bid,'create'))return forbidden(res);
+ const old=await sql.query('SELECT id,row_count FROM work_import_runs WHERE board_id=$1 AND user_id=$2 AND request_id=$3::uuid AND work_board_role($2,$1)>=2',args.slice(0,3));
+ return old.length?res.status(200).json({...old[0],replayed:true}):res.status(409).json({error:'Importação não concluída.'});
+ }
  if(action==='access'){
  if(!user.is_admin)return forbidden(res);
  if(req.method!=='PATCH')return res.status(405).end();
