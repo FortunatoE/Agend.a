@@ -8,6 +8,7 @@ const {ensureForms}=require('../lib/work-form-db');
 const {ensureExchange,insertBatch}=require('../lib/work-exchange-db');
 const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
+const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -76,6 +77,16 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  const nextPage=await call(sync.token,'GET',{}, {events:'1',after:eventPage.data.next_after});
  assert.equal(nextPage.code,200);assert.equal(nextPage.data.events.some(e=>e.item_id===insertedSync.data.id&&e.event==='updated'),true);
  assert.equal(nextPage.data.events.every(e=>BigInt(e.cursor)>BigInt(eventPage.data.next_after)),true);
+ const template=await createTemplate(sql,1,'Modelo de teste','project');
+ assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_fields WHERE board_id=$1',[template.id]))[0].n,5);
+ assert.equal((await sql.query('SELECT count(*)::int AS n FROM work_groups WHERE board_id=$1',[template.id]))[0].n,3);
+ const targets=[items[0].id,items[1].id];
+ assert.equal(await bulkWrite(sql,2,1,{ids:targets,mode:'status',field_id:1,value:'Em andamento'}),2);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM work_items WHERE id=ANY($1::int[]) AND values->>'1'='Em andamento'",[targets]))[0].n,2);
+ assert.equal(await bulkWrite(sql,2,1,{ids:[targets[0],2147483647],mode:'group',group_id:null}),0);
+ assert.equal((await sql.query('SELECT group_id FROM work_items WHERE id=$1',[targets[0]]))[0].group_id,1);
+ assert.equal(await bulkWrite(sql,3,1,{ids:targets,mode:'delete'}),0);
+ assert.equal(await bulkWrite(sql,1,1,{ids:targets,mode:'group',group_id:null}),2);
  await sql.query('UPDATE app_users SET can_edit=false WHERE id=2');
  assert.equal((await call(sync.token,'PATCH',{...baseSync,request_id:'00000000-0000-4000-8000-000000000012'})).code,403);
  await sql.query("DELETE FROM work_workspace_members WHERE workspace_id=1 AND user_id=2");
