@@ -1,41 +1,30 @@
-const { neon } = require('@neondatabase/serverless');
-const seed = [
-  ['Validar rota de entrega', 'Confirmar logística e janela de recebimento.', 'Logística · Adubo', 'Colaborador 1', '2026-11-24', 'alta', 'semanal', 'todo', 0],
-  ['Atualizar planilha de compras', 'Lançar as cotações recebidas pela manhã.', 'Administrativo', 'Colaborador 2', '2026-11-24', 'normal', 'diária', 'todo', 0],
-  ['Inspeção do estoque de defensivos', 'Registrar saldo físico e divergências.', 'Logística · Defensivo', 'Colaborador 3', '2026-11-25', 'média', 'semanal', 'andamento', 45],
-  ['Preparar cronograma de safra', 'Revisar dependências do planejamento.', 'Planejamento', 'Colaborador 4', '2026-11-28', 'normal', 'mensal', 'andamento', 60],
-  ['Conferir notas fiscais', 'Documentos de entrada da semana.', 'Administrativo', 'Colaborador 2', '2026-11-22', 'alta', 'não se repete', 'revisão', 85],
-  ['Inventário semanal', 'Rotina recorrente registrada.', 'Logística · Adubo', 'Colaborador 1', '2026-11-21', 'normal', 'semanal', 'concluída', 100]
-];
-async function bootstrap(sql) {
-  await sql`CREATE TABLE IF NOT EXISTS tasks (
-    id SERIAL PRIMARY KEY, title TEXT NOT NULL, description TEXT DEFAULT '', area TEXT NOT NULL,
-    assignee TEXT NOT NULL, due_date DATE, priority TEXT NOT NULL DEFAULT 'normal',
-    recurrence TEXT NOT NULL DEFAULT 'não se repete', status TEXT NOT NULL DEFAULT 'todo',
-    progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )`;
-  const existing = await sql.query('SELECT count(*)::int AS total FROM tasks');
-  if (existing[0].total === 0) for (const t of seed)
-    await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence,status,progress) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', t);
-}
-module.exports = async (req, res) => {
+const { body, session, allowed, activity, unauth, forbidden } = require('./_core');
+module.exports = async (req,res) => {
   try {
-    const sql = neon(process.env.DATABASE_URL); await bootstrap(sql);
-    if (req.method === 'GET') return res.status(200).json(await sql.query('SELECT * FROM tasks ORDER BY due_date ASC NULLS LAST,id DESC'));
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {};
-    if (req.method === 'POST') {
-      const {title,description='',area,assignee,due_date,priority='normal',recurrence='não se repete'} = body;
-      if (!title || !area || !assignee || !due_date) return res.status(400).json({error:'Título, área, responsável e prazo são obrigatórios.'});
-      const rows = await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[title,description,area,assignee,due_date,priority,recurrence]);
-      return res.status(201).json(rows[0]);
+    const {sql,user}=await session(req); if(!user) return unauth(res);
+    if(req.method==='GET') return res.status(200).json(await sql.query('SELECT * FROM tasks ORDER BY due_date ASC NULLS LAST,id DESC'));
+    const data=body(req);
+    if(req.method==='POST') {
+      if(!allowed(user,'create')) return forbidden(res);
+      const {title,description='',area,assignee,due_date,priority='normal',recurrence='não se repete'}=data;
+      if(!title||!area||!assignee||!due_date) return res.status(400).json({error:'Título, área, responsável e prazo são obrigatórios.'});
+      const rows=await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',[title,description,area,assignee,due_date,priority,recurrence]);
+      await activity(sql,rows[0].id,user.id,'Criou a atividade'); return res.status(201).json(rows[0]);
     }
-    if (req.method === 'PATCH') {
-      const {id,status,progress} = body; if (!id) return res.status(400).json({error:'Atividade inválida.'});
-      const p = status === 'concluída' ? 100 : Math.max(0,Math.min(100,Number(progress ?? 0)));
-      const rows = await sql.query('UPDATE tasks SET status=COALESCE($1,status),progress=$2 WHERE id=$3 RETURNING *',[status,p,id]);
-      return res.status(200).json(rows[0]);
+    if(req.method==='PATCH') {
+      if(!allowed(user,'edit')) return forbidden(res);
+      const {id,status,progress,title,description,area,assignee,due_date,priority,recurrence}=data; if(!id) return res.status(400).json({error:'Atividade inválida.'});
+      const current=(await sql.query('SELECT * FROM tasks WHERE id=$1',[id]))[0]; if(!current) return res.status(404).json({error:'Atividade não encontrada.'});
+      const nextStatus=status||current.status, nextProgress=nextStatus==='concluída'?100:Math.max(0,Math.min(100,Number(progress ?? current.progress)));
+      const rows=await sql.query('UPDATE tasks SET title=$1,description=$2,area=$3,assignee=$4,due_date=$5,priority=$6,recurrence=$7,status=$8,progress=$9 WHERE id=$10 RETURNING *',[
+        title??current.title,description??current.description,area??current.area,assignee??current.assignee,due_date??current.due_date,priority??current.priority,recurrence??current.recurrence,nextStatus,nextProgress,id
+      ]);
+      await activity(sql,id,user.id,status&&status!==current.status?`Alterou status para ${nextStatus}`:'Editou a atividade'); return res.status(200).json(rows[0]);
     }
-    res.setHeader('Allow','GET, POST, PATCH'); return res.status(405).end();
-  } catch (error) { console.error(error); return res.status(500).json({error:'Não foi possível acessar as atividades.'}); }
+    if(req.method==='DELETE') {
+      if(!allowed(user,'delete')) return forbidden(res); if(!data.id) return res.status(400).json({error:'Atividade inválida.'});
+      await sql.query('DELETE FROM tasks WHERE id=$1',[data.id]); return res.status(200).json({ok:true});
+    }
+    res.setHeader('Allow','GET,POST,PATCH,DELETE'); return res.status(405).end();
+  } catch(error){console.error(error);return res.status(500).json({error:'Não foi possível acessar as atividades.'});}
 };

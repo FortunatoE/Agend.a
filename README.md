@@ -9,6 +9,10 @@ Plataforma interna para distribuir e acompanhar atividades de equipe.
 - Calendário de prazos
 - Rotinas recorrentes
 - Relatórios por área
+- Tema claro e escuro
+- Controle de acesso por usuário e permissões
+- Checklists, comentários, histórico e anexos privados
+- Calendário anual, mensal, semanal e diário
 - PostgreSQL no Neon, conectado à Vercel
 
 ## Áreas
