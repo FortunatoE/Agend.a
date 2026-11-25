@@ -17,30 +17,13 @@ module.exports=async(req,res)=>{
  await sql.query("ALTER TABLE work_fields ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'");
  await sql.query(`DO $migration$
  BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='work_fields'::regclass AND conname='work_fields_type_v2_check') THEN
  PERFORM pg_advisory_xact_lock(86124013);
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='work_fields'::regclass AND conname='work_fields_type_v2_check') THEN
  ALTER TABLE work_fields DROP CONSTRAINT IF EXISTS work_fields_type_check;
  ALTER TABLE work_fields ADD CONSTRAINT work_fields_type_v2_check CHECK(type IN ('text','number','date','checkbox','status','relation','lookup','rollup','formula'));
  END IF;
- END IF;
- END $migrationconst {session,body,allowed,unauth,forbidden}=require('./_core');
-const {computeItems,validateConfig}=require('../lib/work-calculations');
-const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
-const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
-const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
-module.exports=async(req,res)=>{
- try{
- const {sql,user}=await session(req);if(!user)return unauth(res);
- await sql.query("CREATE TABLE IF NOT EXISTS workspaces (id SERIAL PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW())");
- await sql.query("CREATE TABLE IF NOT EXISTS work_boards (id SERIAL PRIMARY KEY,workspace_id INTEGER NOT NULL REFERENCES workspaces(id),name TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())");
- await sql.query("CREATE TABLE IF NOT EXISTS work_fields (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,type TEXT NOT NULL CHECK(type IN ('text','number','date','checkbox','status')),UNIQUE(board_id,name))");
- await sql.query("CREATE TABLE IF NOT EXISTS work_items (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,title TEXT NOT NULL,values JSONB NOT NULL DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW())");
- await sql.query("CREATE TABLE IF NOT EXISTS work_groups (id SERIAL PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT NOT NULL,UNIQUE(board_id,name))");
- await sql.query("ALTER TABLE work_items ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES work_groups(id) ON DELETE SET NULL");
- await sql.query("CREATE INDEX IF NOT EXISTS work_items_board_idx ON work_items(board_id)");
-);
-
+ END;
+ $migration$`);
  if(req.method==='GET'){
  const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups});
