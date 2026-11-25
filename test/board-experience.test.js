@@ -1,0 +1,10 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {filterItems,pageItems}=require('../dist/board-core');
+const {normalizeBulk,templates}=require('../lib/work-board-ops');
+const fields=[{id:1,type:'status'},{id:2,type:'text'},{id:3,type:'text',config:{restricted:true}}];
+const items=[{id:1,title:'Ação',group_id:1,values:{1:'Concluído',2:'João'}},{id:2,title:'Beta',group_id:null,values:{2:'Maria',3:'segredo'}},{id:3,title:'Gama',group_id:1,values:{1:'A fazer'}}];
+test('search normalizes accents, searches allowed values and excludes restricted fields',()=>{assert.deepEqual(filterItems(items,fields,{query:'joao'}).map(i=>i.id),[1]);assert.deepEqual(filterItems(items,fields,{query:'acao'}).map(i=>i.id),[1]);assert.equal(filterItems(items,fields,{query:'segredo'}).length,0)});
+test('group and status filters combine and sorting does not mutate input',()=>{assert.deepEqual(filterItems(items,fields,{group:'1',status:'A fazer'}).map(i=>i.id),[3]);assert.deepEqual(filterItems(items,fields,{group:'none',status:'none'}).map(i=>i.id),[2]);assert.deepEqual(filterItems(items,fields,{order:'newest'}).map(i=>i.id),[3,2,1]);assert.equal(items[0].id,1)});
+test('pagination clamps page after deletion and supports empty results',()=>{assert.deepEqual(pageItems(items,9,2),{rows:[items[2]],page:2,total:2});assert.deepEqual(pageItems([],2,25),{rows:[],page:1,total:1})});
+test('bulk validates IDs, deduplicates and rejects unsafe fields or operations',()=>{assert.deepEqual(normalizeBulk({ids:[1,1,2],mode:'group',group_id:null}),{ids:[1,2],mode:'group',group_id:null});for(const x of [{ids:[],mode:'delete'},{ids:['1'],mode:'delete'},{ids:[1],mode:'status',field_id:2,value:'x'},{ids:[1],mode:'group',group_id:0},{ids:[1],mode:'rename'}])assert.throws(()=>normalizeBulk(x));assert.equal(Object.keys(templates).length,3)});
