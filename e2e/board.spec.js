@@ -30,3 +30,43 @@ test('board navigation, filters, pagination, selection and Kanban',async({page})
  await expect(board.getByRole('button',{name:'Acesso e auditoria'})).toHaveCount(0);
  expect(errors).toEqual([]);
 });
+
+test('product experience: icon names, dashboard drill-down, search, dialog keyboard and mobile navigation',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const user={id:1,name:'Teste',username:'teste',is_admin:false,can_create:true,can_edit:true,can_delete:false};
+ const tasks=[
+ {id:1,title:'Conferência de estoque',area:'Planejamento',assignee:'João',status:'todo',due_date:'2020-01-01T00:00:00.000Z',priority:'alta',progress:0,recurrence:'não se repete',description:'Verificar estoque'},
+ {id:2,title:'Revisão futura',area:'Planejamento',assignee:'Ana',status:'andamento',due_date:'2099-01-01',priority:'normal',progress:50,recurrence:'não se repete',description:'Revisar relatório'}];
+ await page.route('**/api/**',async route=>{
+ const p=new URL(route.request().url()).pathname;
+ const json=p==='/api/auth'?{user}:p==='/api/tasks'?tasks:p==='/api/notifications'?{notifications:[]}:p==='/api/team'?[{id:1,name:'João'},{id:2,name:'Ana'}]:p==='/api/workspaces'?{workspaces:[{id:1,name:'Equipe'}],boards:[{id:1,workspace_id:1,name:'Planejamento mensal'}],fields:[],items:[],groups:[],permissions:{1:'editor'},forms:[]}:p==='/api/task-detail'?{checklist:[],comments:[],attachments:[],history:[]}:[];
+ await route.fulfill({json});
+ });
+ await page.goto(origin);
+ await expect(page.locator('#overview .ui-kpi')).toHaveCount(4);
+ await expect(page.getByRole('button',{name:'Notificações',exact:true})).toBeVisible();
+ await expect(page.locator('#notifications svg')).toHaveCount(1);
+ await page.getByRole('button',{name:/Atrasadas/}).click();
+ await expect(page.locator('#workRows tbody tr')).toHaveCount(1);
+ await expect(page.locator('#workRows')).toContainText('Conferência de estoque');
+ await page.getByRole('button',{name:'Limpar filtro',exact:true}).click();
+ await expect(page.locator('#workRows tbody tr')).toHaveCount(2);
+ await page.getByRole('button',{name:'Busca global',exact:true}).click();
+ const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
+ await dialog.getByRole('searchbox').fill('conferencia');
+ await expect(dialog.getByRole('button',{name:/Conferência de estoque/})).toBeVisible();
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Busca global',exact:true})).toBeFocused();
+ await page.getByRole('button',{name:'Conferência de estoque',exact:true}).click();
+ await expect(page.locator('#modal.ui-drawer')).toBeVisible();
+ await expect(page.getByRole('dialog')).toContainText('Responsável');
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Recolher menu',exact:true}).click();
+ await expect(page.locator('#app')).toHaveClass(/ui-collapsed/);
+ await page.getByRole('button',{name:'Expandir menu',exact:true}).click();
+ await page.setViewportSize({width:390,height:844});
+ await page.getByRole('button',{name:'Relatórios',exact:true}).click();
+ await expect(page.locator('#reports')).toContainText('João');
+ await expect(page.locator('#reports')).not.toContainText('Colaborador 1');
+ expect(errors).toEqual([]);
+});
