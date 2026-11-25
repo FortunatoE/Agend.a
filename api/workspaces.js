@@ -4,6 +4,8 @@ const {ensureAutomations}=require('../lib/work-automation-db');
 const {normalizeRule}=require('../lib/work-automation-rules');
 const {ensureWorkflows}=require('../lib/work-workflow-db');
 const {normalizeWorkflow}=require('../lib/work-workflow-rules');
+const {ensureForms}=require('../lib/work-form-db');
+const {normalizeForm,validateResponse}=require('../lib/work-form-rules');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
 const id=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):null;
@@ -30,13 +32,52 @@ module.exports=async(req,res)=>{
  $migration$`);
  await ensureAutomations(sql);
  await ensureWorkflows(sql);
+ await ensureForms(sql);
  if(req.method==='GET'){
  const [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+' ORDER BY id')));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
  const [workflows,workflowRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_workflows ORDER BY id'),sql.query('SELECT * FROM work_workflow_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
- return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups,automations,automationRuns,workflows,workflowRuns});
+ const forms=await sql.query(user.is_admin?'SELECT * FROM work_forms ORDER BY id':'SELECT id,board_id,name,description,fields,group_id,enabled FROM work_forms WHERE enabled ORDER BY id');
+ const formSubmissions=user.is_admin?await sql.query('SELECT s.*,u.name AS submitted_by_name FROM work_form_submissions s LEFT JOIN app_users u ON u.id=s.submitted_by ORDER BY s.id DESC LIMIT 200'):[];
+ return res.status(200).json({workspaces,boards,fields,items:computeItems(items,fields),groups,automations,automationRuns,workflows,workflowRuns,forms,formSubmissions});
  }
  const d=body(req);const action=d.action;
+ if(action==='form_submit'){
+ if(req.method!=='POST')return res.status(405).end();
+ if(!allowed(user,'create'))return forbidden(res);
+ if(!id(d.form_id)||typeof d.request_id!=='string'||!(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(d.request_id)))return res.status(400).json({error:'Identificação de envio inválida.'});
+ const params=[id(d.form_id),user.id,d.request_id];
+ const previous=()=>sql.query('SELECT id,item_id FROM work_form_submissions WHERE form_id=$1 AND submitted_by=$2 AND request_id=$3::uuid',params);
+ const existing=await previous();if(existing.length)return res.status(200).json(existing[0]);
+ const form=(await sql.query('SELECT * FROM work_forms WHERE id=$1 AND enabled',[params[0]]))[0];
+ if(!form)return res.status(404).json({error:'Formulário indisponível.'});
+ const fields=await sql.query('SELECT * FROM work_fields WHERE board_id=$1',[form.board_id]);
+ let response;try{response=validateResponse(form,d,fields)}catch(e){return res.status(400).json({error:e.message})}
+ try{
+ const result=await sql.query(`WITH live_form AS (SELECT id,board_id,group_id FROM work_forms WHERE id=$1 AND enabled FOR SHARE),
+ new_item AS (INSERT INTO work_items(board_id,group_id,title,values) SELECT board_id,group_id,$4,$5::jsonb FROM live_form RETURNING id,board_id)
+ INSERT INTO work_form_submissions(form_id,board_id,item_id,submitted_by,request_id,title,answers)
+ SELECT $1,board_id,id,$2,$3::uuid,$4,$5::jsonb FROM new_item RETURNING id,item_id`,[...params,response.title,JSON.stringify(response.values)]);
+ return result.length?res.status(201).json(result[0]):res.status(409).json({error:'Formulário pausado.'});
+ }catch(e){if(e.code==='23505'){const existing=await previous();if(existing.length)return res.status(200).json(existing[0])}throw e}
+ }
+ if(action==='form'){
+ if(!user.is_admin)return forbidden(res);
+ if(req.method==='POST'){
+ const board=id(d.board_id);
+ if(!board||!(await sql.query('SELECT id FROM work_boards WHERE id=$1',[board])).length)return res.status(400).json({error:'Quadro inválido.'});
+ const [fields,groups]=await Promise.all([sql.query('SELECT * FROM work_fields WHERE board_id=$1',[board]),sql.query('SELECT id,board_id FROM work_groups WHERE board_id=$1',[board])]);
+ let form;try{form=normalizeForm(d,board,fields,groups)}catch(e){return res.status(400).json({error:e.message})}
+ const result=await sql.query('INSERT INTO work_forms(board_id,name,description,fields,group_id,created_by) VALUES($1,$2,$3,$4::jsonb,$5,$6) RETURNING *',[board,form.name,form.description,JSON.stringify(form.fields),form.group_id,user.id]);
+ return res.status(201).json(result[0]);
+ }
+ if(req.method==='PATCH'){
+ if(!id(d.id)||typeof d.enabled!=='boolean')return res.status(400).json({error:'Formulário ou estado inválido.'});
+ const result=await sql.query('UPDATE work_forms SET enabled=$1 WHERE id=$2 RETURNING *',[d.enabled,id(d.id)]);
+ return result.length?res.status(200).json(result[0]):res.status(404).json({error:'Formulário não encontrado.'});
+ }
+ return res.status(405).end();
+ }
  if(action==='workflow'){
  if(!user.is_admin)return forbidden(res);
  if(req.method==='POST'){
