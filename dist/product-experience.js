@@ -42,7 +42,7 @@ function uiButtonIcon(label){
  return exact[label]||(label.startsWith('+ ')?'plus':null);
 }
 function uiIconOnly(b,icon,label){b.replaceChildren(uiIcon(icon));b.title=label;b.setAttribute('aria-label',label);return b}
-const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',settings:'settings'};
+const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',communication:'message',settings:'settings'};
 let uiToastTimer,uiTaskFilter='all',uiReturnFocus=null,uiDialog=null,uiLastFocus=null;
 function uiToast(message,kind='info'){
  const host=$('#toast');clearTimeout(uiToastTimer);host.replaceChildren(uiIcon(kind==='error'?'alert':kind==='success'?'check':'info'),node('span',String(message)));
@@ -79,7 +79,7 @@ function uiInit(){
  const nav=header.querySelector('.nav');nav.setAttribute('aria-label','Navegação principal');
  for(const b of nav.querySelectorAll('button[data-view]')){const title=b.textContent;uiDecorate(b,uiNav[b.dataset.view],title);b.lastChild.className='ui-nav-text';b.setAttribute('aria-label',title);b.title=title}
  for(const [id,label] of [['overview','Início'],['workspaces','Espaços de trabalho'],['table','Atividades'],['routines','Gestão']])nav.insertBefore(node('div',label,'ui-nav-label'),nav.querySelector('[data-view="'+id+'"]'));
- uiIconOnly($('#password'),'key','Alterar senha');uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
+ uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
  const pass=$('#loginPassword'),wrap=node('span',undefined,'ui-password-row');pass.replaceWith(wrap);wrap.append(pass);const show=wsButton('',()=>{const visible=pass.type==='password';pass.type=visible?'text':'password';uiIconOnly(show,'eye',visible?'Ocultar senha':'Mostrar senha');show.setAttribute('aria-pressed',String(visible))},'ui-password-toggle');uiIconOnly(show,'eye','Mostrar senha');show.setAttribute('aria-pressed','false');wrap.append(show);
  $('#loginError').setAttribute('role','alert');
  const modal=$('#modal'),app=$('#app');
@@ -105,11 +105,11 @@ function uiDashboard(){
  const upcoming=D.upcoming(a).slice(0,8);for(const t of upcoming){const b=wsButton('',()=>detail(t.id).catch(e=>uiToast(e.message,'error')),'item ui-item'),body=node('div',undefined,'ui-item-body');body.append(node('b',t.title),node('small',(t.area||'')+' · '+(t.assignee||'Sem responsável')));b.append(uiIcon('calendar'),body,node('time',fmt(t.due_date)),uiIcon('arrow'));list.append(b)}if(!upcoming.length)list.append(node('p','Nenhuma entrega futura nesta área.','empty'));
  dist.append(node('h2','Distribuição por status'));const bar=node('div',undefined,'ui-distribution');bar.setAttribute('aria-hidden','true');dist.append(bar);
  const colors=['var(--muted)','var(--info)','var(--amber)','var(--green)'];for(const [i,s] of statuses.entries()){const count=a.filter(t=>t.status===s).length,c=s==='concluída'?'var(--green)':s==='andamento'?'var(--info)':colors[i%colors.length];if(count){const seg=node('span');seg.style.flex=String(count);seg.style.background=c;bar.append(seg)}const row=node('div',undefined,'ui-status-row'),sw=node('span',undefined,'ui-swatch');sw.style.background=c;row.append(sw,node('span',labels[s]||s),node('strong',String(count)));dist.append(row)}
- dist.append(node('p','Atrasos são uma condição de prazo e podem ocorrer em diferentes status.','sub'));grid.append(next,dist);host.replaceChildren(stats,grid);
+ dist.append(node('p','Atrasos são uma condição de prazo e podem ocorrer em diferentes status.','sub'));grid.append(next,dist);host.replaceChildren(stats,grid);weeklyOverview(host);
 }
 function uiReports(){
  const data=scoped(),host=$('#reports'),areasPanel=node('div',undefined,'panel'),people=node('div',undefined,'panel');
  areasPanel.append(node('h2','Conclusão por área'));const names=[...new Set(data.map(t=>t.area).filter(Boolean))];function row(label,count,total,description){const r=node('div',undefined,'report'),bar=node('div',undefined,'bar'),fill=node('i');fill.style.width=Math.round(count/(total||1)*100)+'%';bar.append(fill);r.append(node('b',label),bar,node('span',description));return r}
  for(const a of names){const ts=data.filter(t=>t.area===a),done=ts.filter(t=>t.status==='concluída').length;areasPanel.append(row(a,done,ts.length,done+'/'+ts.length+' concluídas'))}if(!names.length)areasPanel.append(node('p','Nenhuma atividade nesta área.','empty'));
- people.append(node('h2','Atividades abertas por responsável'));const members=[...new Set([...team.map(u=>u.name),...data.map(t=>t.assignee||'Sem responsável')].filter(Boolean))],counts=members.map(name=>[name,data.filter(t=>(t.assignee||'Sem responsável')===name&&t.status!=='concluída').length]).sort((a,b)=>b[1]-a[1]);const max=Math.max(1,...counts.map(x=>x[1]));for(const [name,n] of counts)people.append(row(name,n,max,n+' abertas'));if(!counts.length)people.append(node('p','Nenhum responsável disponível.','empty'));people.append(node('p','Barras proporcionais ao maior número de atividades abertas; não representam capacidade de trabalho.','sub'));host.replaceChildren(areasPanel,people);
+ people.append(node('h2','Atividades abertas por responsável'));const members=[...new Set([...(current?.is_admin?team.map(u=>u.name):[current?.name]),...data.map(t=>t.assignee||'Sem responsável')].filter(Boolean))],counts=members.map(name=>[name,data.filter(t=>(t.assignee||'Sem responsável')===name&&t.status!=='concluída').length]).sort((a,b)=>b[1]-a[1]);const max=Math.max(1,...counts.map(x=>x[1]));for(const [name,n] of counts)people.append(row(name,n,max,n+' abertas'));if(!counts.length)people.append(node('p','Nenhum responsável disponível.','empty'));people.append(node('p','Barras proporcionais ao maior número de atividades abertas; não representam capacidade de trabalho.','sub'));host.replaceChildren(areasPanel,people);
 }

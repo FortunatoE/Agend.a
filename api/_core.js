@@ -1,5 +1,6 @@
 const { neon } = require('@neondatabase/serverless');
 const crypto = require('crypto');
+const {ensureTaskOwnership}=require('../lib/task-ownership');
 
 const seed = [
   ['Validar rota de entrega','Confirmar logística e janela de recebimento.','Logística · Adubo','Colaborador 1','2026-11-24','alta','semanal','todo',0],
@@ -86,6 +87,7 @@ async function bootstrap(sql) {
     const p = passwordHash(process.env.ADMIN_INITIAL_PASSWORD);
     await sql.query('INSERT INTO app_users (username,name,password_salt,password_hash,is_admin,can_create,can_edit,can_delete) VALUES ($1,$2,$3,$4,true,true,true,true)', ['emmanuel.fortunato','Emmanuel Fortunato',p.salt,p.hash]);
   }
+  await ensureTaskOwnership(sql);
 }
 async function session(req, sql = database()) {
   await bootstrap(sql); const token = cookies(req).agenda_session;
@@ -101,11 +103,11 @@ async function notify(sql, userId, taskId, type, title, message) {
   await sql.query('INSERT INTO notifications (user_id,task_id,type,title,message) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [userId,taskId||null,type,title,message]);
 }
 async function notifyAssignee(sql, task, actorId, type, title, message) {
-  const recipients = await sql.query('SELECT id FROM app_users WHERE active=true AND LOWER(name)=LOWER($1)', [task.assignee]);
+  const recipients = await sql.query('SELECT id FROM app_users WHERE active=true AND id=$1', [task.assignee_id]);
   await Promise.all(recipients.filter(recipient => recipient.id !== actorId).map(recipient => notify(sql,recipient.id,task.id,type,title,message)));
 }
 async function syncOverdueNotifications(sql, user) {
-  const tasks = await sql.query("SELECT id,title FROM tasks WHERE LOWER(assignee)=LOWER($1) AND due_date<CURRENT_DATE AND status<>'concluída'", [user.name]);
+  const tasks = await sql.query("SELECT id,title FROM tasks WHERE assignee_id=$1 AND due_date<CURRENT_DATE AND status<>'concluída'", [user.id]);
   await Promise.all(tasks.map(task => notify(sql,user.id,task.id,'overdue','Atividade atrasada',`A atividade “${task.title}” está com o prazo vencido.`)));
 }
 function unauth(res) { return res.status(401).json({ error:'Faça login para continuar.' }); }

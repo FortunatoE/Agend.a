@@ -35,8 +35,8 @@ test('product experience: icon names, dashboard drill-down, search, dialog keybo
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const user={id:1,name:'Teste',username:'teste',is_admin:false,can_create:true,can_edit:true,can_delete:false};
  const tasks=[
- {id:1,title:'Conferência de estoque',area:'Planejamento',assignee:'João',status:'todo',due_date:'2020-01-01T00:00:00.000Z',priority:'alta',progress:0,recurrence:'não se repete',description:'Verificar estoque'},
- {id:2,title:'Revisão futura',area:'Planejamento',assignee:'Ana',status:'andamento',due_date:'2099-01-01',priority:'normal',progress:50,recurrence:'não se repete',description:'Revisar relatório'}];
+ {id:1,title:'Conferência de estoque',area:'Planejamento',assignee:'João',assignee_id:1,status:'todo',due_date:'2020-01-01T00:00:00.000Z',priority:'alta',progress:0,recurrence:'não se repete',description:'Verificar estoque'},
+ {id:2,title:'Revisão futura',area:'Planejamento',assignee:'João',assignee_id:1,status:'andamento',due_date:'2099-01-01',priority:'normal',progress:50,recurrence:'não se repete',description:'Revisar relatório'}];
  await page.route('**/api/**',async route=>{
  const p=new URL(route.request().url()).pathname;
  const json=p==='/api/auth'?{user}:p==='/api/tasks'?tasks:p==='/api/notifications'?{notifications:[]}:p==='/api/team'?[{id:1,name:'João'},{id:2,name:'Ana'}]:p==='/api/workspaces'?{workspaces:[{id:1,name:'Equipe'}],boards:[{id:1,workspace_id:1,name:'Planejamento mensal'}],fields:[],items:[],groups:[],permissions:{1:'editor'},forms:[]}:p==='/api/task-detail'?{checklist:[],comments:[],attachments:[],history:[]}:[];
@@ -69,4 +69,42 @@ test('product experience: icon names, dashboard drill-down, search, dialog keybo
  await expect(page.locator('#reports')).toContainText('João');
  await expect(page.locator('#reports')).not.toContainText('Colaborador 1');
  expect(errors).toEqual([]);
+});
+
+test('team calendar is admin-only and personal activity screens hide other users',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));let admin=false;
+ const today=new Date(),month=today.toISOString().slice(0,7),due=month+'-01';
+ const tasks=[{id:1,title:'Minha tarefa',area:'Planejamento',assignee:'João',assignee_id:2,due_date:due,status:'todo',priority:'normal',progress:0,recurrence:'não se repete',description:'Nota pessoal'},{id:2,title:'Tarefa alheia',area:'Planejamento',assignee:'Ana',assignee_id:3,due_date:due,status:'concluída',priority:'normal',progress:100,recurrence:'semanal',description:'Nota da equipe'}];
+ await page.route('**/api/**',async route=>{const p=new URL(route.request().url()).pathname;
+ const user={id:2,name:'João',username:'joao',is_admin:admin,can_create:true,can_edit:true,can_delete:false};
+ await route.fulfill({json:p==='/api/auth'?{user}:p==='/api/tasks'?tasks:p==='/api/team'?[{id:2,name:'João'},{id:3,name:'Ana'}]:p==='/api/notifications'?{notifications:[]}:[]})});
+ await page.goto(origin);await expect(page.locator('#overview .ui-kpi').first()).toContainText('1');
+ await page.locator('[data-view="calendar"]').click();await expect(page.getByRole('button',{name:'Equipe · mensal',exact:true})).toHaveCount(0);
+ await expect(page.locator('#calendar')).not.toContainText('Tarefa alheia');
+ admin=true;await page.reload();await expect(page.locator('#overview .ui-kpi').first()).toContainText('2');
+ await page.locator('[data-view="calendar"]').click();const cal=page.locator('#calendar');
+ await expect(cal.getByRole('heading',{name:'Acompanhamento da equipe'})).toBeVisible();
+ await expect(cal.locator('.team-cal-table tbody tr')).toHaveCount(2);
+ await cal.getByLabel('Responsável',{exact:true}).selectOption('3');await expect(cal.locator('.team-cal-table tbody tr')).toHaveCount(1);await expect(cal.locator('.team-cal-table')).toContainText('Tarefa alheia');
+ await cal.getByRole('searchbox',{name:'Buscar atividade'}).fill('inexistente');await expect(cal.locator('.team-cal-table tbody tr')).toHaveCount(0);
+ expect(errors).toEqual([]);
+});
+
+test('weekly dashboard, creator edit rules and communication acknowledgements',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const user={id:2,name:'João',username:'joao',is_admin:false,can_create:true,can_edit:true,can_delete:true};
+ const now=new Date(),due=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
+ const common={area:'Planejamento',assignee:'João',assignee_id:2,due_date:due,status:'todo',priority:'normal',progress:0,recurrence:'semanal',recurrence_config:{weekdays:[1,3]},description:''};
+ const tasks=[{...common,id:1,title:'Atribuída pelo administrador',created_by:1},{...common,id:2,title:'Criada por mim',created_by:2},{...common,id:3,title:'Atividade de terceiro',assignee_id:3,created_by:3}];
+ const message={id:1,title:'Conferir estoque',kind:'lembrete',message:null,created_at:new Date().toISOString(),seen_at:null,done_at:null};let patches=[];
+ await page.route('**/api/**',async route=>{const p=new URL(route.request().url()).pathname;let json=[];
+ if(p==='/api/auth')json={user};else if(p==='/api/tasks')json=tasks;else if(p==='/api/team')json=[{id:2,name:'João'},{id:3,name:'Ana'}];else if(p==='/api/notifications')json={notifications:[]};else if(p==='/api/task-detail')json={checklist:[],comments:[],attachments:[],history:[]};
+ else if(p==='/api/communication'){if(route.request().method()==='PATCH'){const d=route.request().postDataJSON();patches.push(d.action);message.seen_at=message.seen_at||new Date().toISOString();message.message='Conferir o saldo físico';if(d.action==='done')message.done_at=new Date().toISOString();json={seen_at:message.seen_at,done_at:message.done_at}}else json={received:[message],sent:[],notes:[],areas:['Planejamento'],members:[{user_id:2,area:'Planejamento'}]}}
+ await route.fulfill({json})});
+ await page.goto(origin);const week=page.locator('.overview-week-table');
+ await expect(week.locator('tbody tr')).toHaveCount(2);await expect(week.locator('thead th')).toHaveCount(11);await expect(week).not.toContainText('Atividade de terceiro');
+ await week.getByRole('button',{name:'Atribuída pelo administrador',exact:true}).click();let d=page.getByRole('dialog');await expect(d.getByText(/dados protegidos/)).toBeVisible();await expect(d.getByRole('button',{name:'Editar atividade',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
+ await week.getByRole('button',{name:'Criada por mim',exact:true}).click();await d.getByRole('button',{name:'Editar atividade',exact:true}).click();
+ await expect(d.getByRole('heading',{name:'Editar atividade'})).toBeVisible();await expect(d.getByRole('checkbox',{name:'Seg',exact:true})).toBeChecked();await expect(d.getByRole('checkbox',{name:'Qua',exact:true})).toBeChecked();await d.locator('#recurrence').selectOption('mensal');await expect(d.getByLabel('Dia do mês',{exact:true})).toBeVisible();await d.locator('#recurrence').selectOption('anual');await expect(d.getByLabel('Mês',{exact:true})).toBeVisible();await page.keyboard.press('Escape');
+ await page.locator('[data-view="communication"]').click();const comm=page.locator('#communication');await expect(comm.getByRole('button',{name:'Abrir comunicado'})).toBeVisible();await expect(comm).not.toContainText('Conferir o saldo físico');await comm.getByRole('button',{name:'Abrir comunicado'}).click();await expect(comm).toContainText('Conferir o saldo físico');await comm.getByRole('button',{name:'Feito',exact:true}).click();await expect(comm.getByRole('button',{name:'Feito',exact:true})).toHaveCount(0);await expect(comm).toContainText('Visualizado:');expect(patches).toEqual(['seen','done']);expect(errors).toEqual([]);
 });

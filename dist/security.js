@@ -12,12 +12,13 @@ function openPassword() {
   };
 }
 
+let recoveryLoading=false;
 async function addRecoveryPanel() {
   const host = $('#settings');
   const list = $('#accessList');
-  if (!host || !list || $('#recoveryPanel') || !current?.is_admin) return;
-  const users = await api('/api/users');
-  list.insertAdjacentHTML('afterend', '<div class="detail-section" id="recoveryPanel"><h3>Recuperação de acesso</h3><p class="sub">Defina uma senha temporária e informe-a ao membro da equipe. As sessões dele serão encerradas.</p><form class="form" id="recoveryForm"><div class="twocol"><label>Usuário<select id="recoveryUser">'+users.map(u=>'<option value="'+u.id+'">'+u.name+' · @'+u.username+'</option>').join('')+'</select></label><label>Nova senha temporária<input id="recoveryPassword" type="password" minlength="10" required></label></div><div class="actions"><button class="plain">Redefinir senha</button></div></form></div>');
+  if (!host || !list || $('#recoveryPanel') || !current?.is_admin || recoveryLoading) return;
+  recoveryLoading=true;let users;try{users=await api('/api/users')}finally{recoveryLoading=false}if(!list.isConnected||$('#recoveryPanel'))return;
+  list.insertAdjacentHTML('afterend', '<div class="detail-section" id="recoveryPanel"><h3>Recuperação de acesso</h3><p class="sub">Defina uma senha temporária e informe-a ao membro da equipe. As sessões dele serão encerradas.</p><form class="form" id="recoveryForm"><div class="twocol"><label>Usuário<select id="recoveryUser">'+users.map(u=>'<option value="'+u.id+'">'+esc(u.name)+' · @'+esc(u.username)+'</option>').join('')+'</select></label><label>Nova senha temporária<input id="recoveryPassword" type="password" minlength="10" required></label></div><div class="actions"><button class="plain">Redefinir senha</button></div></form></div>');
   $('#recoveryForm').onsubmit = async event => {
     event.preventDefault();
     const id = Number($('#recoveryUser').value), user = users.find(item => item.id === id);
@@ -29,4 +30,4 @@ async function addRecoveryPanel() {
 }
 
 new MutationObserver(() => { addRecoveryPanel().catch(error => console.error(error)); }).observe($('#settings'), {childList:true, subtree:true});
-document.addEventListener('DOMContentLoaded', () => { $('#password').onclick = openPassword; });
+

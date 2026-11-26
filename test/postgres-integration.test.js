@@ -10,6 +10,9 @@ const {ensureApiKeys,manageKeys,externalApi}=require('../lib/work-api-db');
 const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-db');
+const {ensureTaskOwnership,findTask,resolveAssignee}=require('../lib/task-ownership');
+const {handleCommunication}=require('../api/communication');
+const {reconcileRoutines}=require('../lib/task-recurrence-db');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -31,6 +34,70 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  INSERT INTO work_boards(workspace_id,name) VALUES(1,'Quadro');
  INSERT INTO work_fields(board_id,name,type) VALUES(1,'Status','status');
  INSERT INTO work_groups(board_id,name) VALUES(1,'Finalizados');`);
+ // Exercise ownership migration against duplicate and unmatched legacy names.
+ await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE,area TEXT NOT NULL DEFAULT 'Planejamento',title TEXT NOT NULL DEFAULT 'Rotina',description TEXT DEFAULT '',priority TEXT DEFAULT 'normal',recurrence TEXT NOT NULL DEFAULT 'não se repete',status TEXT NOT NULL DEFAULT 'todo',progress INTEGER DEFAULT 0,generated_from INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL); CREATE TABLE task_activity(id SERIAL PRIMARY KEY,task_id INT REFERENCES tasks(id),user_id INT REFERENCES app_users(id),detail TEXT); CREATE UNIQUE INDEX notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'; INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
+ await ensureTaskOwnership(sql);await ensureTaskOwnership(sql);
+ const adminUser={id:1,name:'Admin',is_admin:true},editorUser={id:2,name:'Editor',is_admin:false},readerUser={id:3,name:'Leitor',is_admin:false};
+ assert.equal((await findTask(sql,editorUser,1)).assignee_id,2);
+ assert.equal(await findTask(sql,editorUser,2),null);
+ assert.equal(await findTask(sql,readerUser,1),null);
+ assert.equal((await findTask(sql,adminUser,3)).assignee_id,null);
+ assert.equal((await findTask(sql,adminUser,4)).assignee_id,null);
+ assert.deepEqual(await resolveAssignee(sql,editorUser,{}),{id:2,name:'Editor'});
+ assert.equal(await resolveAssignee(sql,editorUser,{assignee_id:3}),null);
+ assert.equal(await resolveAssignee(sql,adminUser,{assignee:'Duplicado'}),null);
+ assert.deepEqual(await resolveAssignee(sql,adminUser,{assignee_id:3}),{id:3,name:'Leitor'});
+ await sql.query('UPDATE tasks SET assignee_id=3,assignee=$1 WHERE id=1',['Leitor']);
+ assert.equal(await findTask(sql,editorUser,1),null);
+ assert.equal((await findTask(sql,readerUser,1)).id,1);
+ // Communication permissions, receipt idempotency and scoped notes.
+ function commResponse(){return {code:0,data:null,status(c){this.code=c;return this},json(d){this.data=d;return this},end(){return this}}}
+ async function comm(user,method,body={}){const res=commResponse();await handleCommunication(sql,user,{method,body},res);return res}
+ assert.equal((await comm(editorUser,'POST',{action:'send',title:'x',message:'x',kind:'recado',audience:'all'})).code,403);
+ const sent=await comm(adminUser,'POST',{action:'send',title:'Aviso',message:'Conferir',kind:'lembrete',audience:'one',user_id:2});assert.equal(sent.code,201);assert.equal(sent.data.recipients,1);
+ const msgId=sent.data.id;
+ assert.equal((await comm(readerUser,'GET')).data.received.length,0);
+ assert.equal((await comm(readerUser,'PATCH',{action:'done',id:msgId})).code,404);
+ const initial=(await comm(editorUser,'GET')).data.received[0];assert.equal(initial.message,null);assert.equal(initial.seen_at,null);
+ const seen=await comm(editorUser,'PATCH',{action:'seen',id:msgId});assert.equal(seen.code,200);assert.ok(seen.data.seen_at);assert.equal(seen.data.done_at,null);
+ assert.equal((await comm(editorUser,'GET')).data.received[0].message,'Conferir');
+ const done=await comm(editorUser,'PATCH',{action:'done',id:msgId});assert.ok(done.data.done_at);
+ const againDone=await comm(editorUser,'PATCH',{action:'done',id:msgId});assert.deepEqual(againDone.data,done.data);
+ assert.equal((await comm(adminUser,'GET')).data.sent[0].recipients[0].id,2);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Área',message:'Restrito',audience:'area',area:'Planejamento'})).code,403);
+ assert.equal((await comm(adminUser,'POST',{action:'membership',user_id:2,area:'Planejamento',enabled:true})).code,200);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Área',message:'Restrito',audience:'area',area:'Planejamento'})).code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Admin',message:'Privado',audience:'admins'})).code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Equipe',message:'Geral',audience:'team'})).code,201);
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,1);
+ assert.equal((await comm(adminUser,'GET')).data.notes.length,3);
+ await comm(adminUser,'POST',{action:'membership',user_id:3,area:'Planejamento',enabled:true});
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,2);
+ await comm(adminUser,'POST',{action:'membership',user_id:3,area:'Planejamento',enabled:false});
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,1);
+ // Dynamic area management and cascade preservation.
+ const added=await comm(adminUser,'POST',{action:'area_manage',name:'Compras'});assert.equal(added.code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'area_manage',name:'Outra'})).code,403);
+ await comm(adminUser,'POST',{action:'membership',user_id:2,area:'Compras',enabled:true});
+ await comm(editorUser,'POST',{action:'note',title:'Compras',message:'Vínculo',audience:'area',area:'Compras'});
+ await sql.query("UPDATE tasks SET area='Compras' WHERE id=1");
+ assert.equal((await comm(adminUser,'PATCH',{action:'area_manage',id:added.data.id,name:'Compras 2'})).code,200);
+ assert.equal((await sql.query('SELECT area FROM tasks WHERE id=1'))[0].area,'Compras 2');
+ assert.equal((await comm(editorUser,'GET')).data.notes.some(n=>n.area==='Compras 2'),true);
+ await sql.query('SAVEPOINT area_delete');
+ assert.equal((await comm(adminUser,'DELETE',{action:'area_manage',id:added.data.id,confirm:true})).code,409);
+ await sql.query('ROLLBACK TO SAVEPOINT area_delete');
+ // Recurrence advances on its date even if the previous task was not completed.
+ const source=(await sql.query("INSERT INTO tasks(assignee,assignee_id,created_by,due_date,title,recurrence,status) VALUES('Editor',2,1,(now() AT TIME ZONE 'America/Cuiaba')::date-1,'Recorrente','diária','andamento') RETURNING id"))[0];
+ const run=await reconcileRoutines(sql,editorUser);assert.equal(run.created,1);
+ const child=(await sql.query('SELECT * FROM tasks WHERE generated_from=$1',[source.id]))[0];
+ assert.equal(child.status,'todo');assert.equal(child.progress,0);assert.equal(child.created_by,1);assert.equal(child.assignee_id,2);
+ assert.equal((await reconcileRoutines(sql,editorUser)).created,0);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM notifications WHERE task_id=$1 AND type='overdue'",[source.id]))[0].n,1);
+ assert.equal((await sql.query('SELECT status FROM tasks WHERE id=$1',[source.id]))[0].status,'andamento');
+ await sql.query("DELETE FROM notifications WHERE type='overdue'");
+ // Keep existing notification-related fixtures independent.
+ await sql.query("DELETE FROM notifications WHERE type='communication'");
  await ensureGovernance(sql);await ensureAutomations(sql);await ensureWorkflows(sql);await ensureForms(sql);await ensureExchange(sql);
  await sql.query("UPDATE workspaces SET restricted=true; UPDATE work_boards SET restricted=true; INSERT INTO work_workspace_members VALUES(1,2,'editor'),(1,3,'viewer'); INSERT INTO work_board_members VALUES(1,2,'editor'),(1,3,'manager')");
  assert.equal((await sql.query('SELECT work_board_role(2,1) AS r'))[0].r,2);

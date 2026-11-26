@@ -1,9 +1,11 @@
 /* Legacy task calendar and Kanban — separate from dynamic Boards. */
 let taskCalendarAnchor=null,taskDragId=null,taskMovePending=false;
 function legacyCalendar(){
+ if(calendarMode==='equipe'&&current?.is_admin)return teamCalendar();
+ if(calendarMode==='equipe')calendarMode='mensal';
  const D=AgendaDates,host=$('#calendar'),now=D.today();taskCalendarAnchor=taskCalendarAnchor||now;
  const anchor=taskCalendarAnchor,{byDay,missing}=D.index(scoped()),tabs=node('div',undefined,'tabs'),panel=node('div',undefined,'panel'),toolbar=node('div',undefined,'tc-toolbar');
- const modes=[['anual','Anual'],['mensal','Mensal'],['semanal','Semanal'],['diário','Diário']];
+ const modes=[...(current?.is_admin?[['equipe','Equipe · mensal']]:[]),['anual','Anual'],['mensal','Mensal'],['semanal','Semanal'],['diário','Diário']];
  for(const [m,label] of modes)tabs.append(wsButton(label,()=>setCalendar(m),'tab '+(m===calendarMode?'active':'')));
  const nav=(delta)=>{taskCalendarAnchor=D.shift(anchor,calendarMode,delta);legacyCalendar()};
  const prev=wsButton('‹',()=>nav(-1)),next=wsButton('›',()=>nav(1));prev.setAttribute('aria-label','Período anterior');next.setAttribute('aria-label','Próximo período');
@@ -51,16 +53,19 @@ async function moveLegacyTask(id,status){
  taskMovePending=true;
  try{const result=await api('/api/tasks',{method:'PATCH',body:JSON.stringify({id:t.id,status})});tasks=tasks.map(x=>x.id===t.id?{...x,...result}:x);if(result.generated&&!tasks.some(x=>x.id===result.generated.id))tasks.push(result.generated);toast(result.generated?'Rotina concluída e próxima ocorrência criada.':'Status atualizado.');try{await load()}catch(e){render();toast('Status salvo; não foi possível atualizar todos os dados.')}}catch(e){toast(e.message)}finally{taskMovePending=false;if(view==='kanban')legacyKanban()}
 }
+let showPastRoutines=false;
 function legacyKanban(){
  const host=$('#kanban'),panel=node('div',undefined,'panel'),board=node('div',undefined,'board tk-board'),editable=can('edit');
  panel.append(node('h2','Fluxo de trabalho'),node('p',editable?'Arraste os cartões entre colunas para alterar o status. Use o seletor no celular ou teclado.':'Consulte as atividades por status. Seu perfil não permite alterações.','sub'),board);
+ const old=scoped().filter(t=>t.has_next);const toggle=wsButton(showPastRoutines?'Ocultar ocorrências anteriores':'Exibir ocorrências anteriores ('+old.length+')',()=>{showPastRoutines=!showPastRoutines;legacyKanban()});panel.insertBefore(toggle,board);
+ const overdue=old.filter(t=>AgendaDates.overdue(t));if(overdue.length)panel.insertBefore(node('p',overdue.length+' ocorrência(s) anterior(es) não realizada(s). Consulte o histórico.','notice'),board);
  for(const s of statuses){
- const items=scoped().filter(t=>t.status===s),col=node('div',undefined,'col'),h=node('h3',labels[s]);col.dataset.status=s;h.append(node('span',String(items.length),'count'));col.append(h);
+ const items=scoped().filter(t=>t.status===s&&(showPastRoutines||!t.has_next)),col=node('div',undefined,'col'),h=node('h3',labels[s]);col.dataset.status=s;h.append(node('span',String(items.length),'count'));col.append(h);
  if(editable){col.ondragover=e=>{if(taskDragId===null||taskMovePending)return;e.preventDefault();e.dataTransfer.dropEffect='move';col.classList.add('tk-target')};col.ondragleave=e=>{if(!col.contains(e.relatedTarget))col.classList.remove('tk-target')};col.ondrop=e=>{e.preventDefault();col.classList.remove('tk-target');const id=taskDragId;taskDragId=null;if(id!==null)moveLegacyTask(id,s)}}
  for(const t of items){
  const c=node('article',undefined,'card '+(t.priority==='alta'?'high':t.priority==='média'?'medium':''));c.dataset.taskId=t.id;
  const title=wsButton(t.title,()=>detail(t.id).catch(e=>toast(e.message)),'tk-title');c.append(title,node('p',t.description||''));
- const meta=node('div',undefined,'meta');meta.append(node('span',t.assignee||''),node('span',fmt(t.due_date)));c.append(meta);
+ const meta=node('div',undefined,'meta');meta.append(node('span',t.assignee||''),node('span',fmt(t.due_date)));c.append(meta);if(AgendaDates.overdue(t))c.append(node('span','Prazo vencido','notice'));if(t.recurrence!=='não se repete')c.append(node('small',t.recurrence,'badge'));
  if(editable){c.draggable=!taskMovePending;c.ondragstart=e=>{taskDragId=t.id;e.dataTransfer.setData('text/plain',String(t.id));e.dataTransfer.effectAllowed='move';c.classList.add('tk-dragging')};c.ondragend=()=>{taskDragId=null;c.classList.remove('tk-dragging');board.querySelectorAll('.tk-target').forEach(x=>x.classList.remove('tk-target'))};
  const sel=node('select');sel.setAttribute('aria-label','Mover '+t.title);for(const st of statuses){const opt=node('option',labels[st]);opt.value=st;sel.append(opt)}sel.value=s;sel.disabled=taskMovePending;sel.onchange=()=>{const target=sel.value;sel.value=s;moveLegacyTask(t.id,target)};c.append(sel)}
  col.append(c);
