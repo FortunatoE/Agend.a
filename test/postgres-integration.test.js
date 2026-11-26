@@ -12,6 +12,7 @@ const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-db');
 const {ensureTaskOwnership,findTask,resolveAssignee}=require('../lib/task-ownership');
 const {handleCommunication}=require('../api/communication');
+const {reconcileRoutines}=require('../lib/task-recurrence-db');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -34,7 +35,7 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  INSERT INTO work_fields(board_id,name,type) VALUES(1,'Status','status');
  INSERT INTO work_groups(board_id,name) VALUES(1,'Finalizados');`);
  // Exercise ownership migration against duplicate and unmatched legacy names.
- await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE); INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
+ await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE,area TEXT NOT NULL DEFAULT 'Planejamento',title TEXT NOT NULL DEFAULT 'Rotina',description TEXT DEFAULT '',priority TEXT DEFAULT 'normal',recurrence TEXT NOT NULL DEFAULT 'não se repete',status TEXT NOT NULL DEFAULT 'todo',progress INTEGER DEFAULT 0,generated_from INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL); CREATE TABLE task_activity(id SERIAL PRIMARY KEY,task_id INT REFERENCES tasks(id),user_id INT REFERENCES app_users(id),detail TEXT); CREATE UNIQUE INDEX notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'; INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
  await ensureTaskOwnership(sql);await ensureTaskOwnership(sql);
  const adminUser={id:1,name:'Admin',is_admin:true},editorUser={id:2,name:'Editor',is_admin:false},readerUser={id:3,name:'Leitor',is_admin:false};
  assert.equal((await findTask(sql,editorUser,1)).assignee_id,2);
@@ -74,6 +75,27 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  assert.equal((await comm(readerUser,'GET')).data.notes.length,2);
  await comm(adminUser,'POST',{action:'membership',user_id:3,area:'Planejamento',enabled:false});
  assert.equal((await comm(readerUser,'GET')).data.notes.length,1);
+ // Dynamic area management and cascade preservation.
+ const added=await comm(adminUser,'POST',{action:'area_manage',name:'Compras'});assert.equal(added.code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'area_manage',name:'Outra'})).code,403);
+ await comm(adminUser,'POST',{action:'membership',user_id:2,area:'Compras',enabled:true});
+ await comm(editorUser,'POST',{action:'note',title:'Compras',message:'Vínculo',audience:'area',area:'Compras'});
+ await sql.query("UPDATE tasks SET area='Compras' WHERE id=1");
+ assert.equal((await comm(adminUser,'PATCH',{action:'area_manage',id:added.data.id,name:'Compras 2'})).code,200);
+ assert.equal((await sql.query('SELECT area FROM tasks WHERE id=1'))[0].area,'Compras 2');
+ assert.equal((await comm(editorUser,'GET')).data.notes.some(n=>n.area==='Compras 2'),true);
+ await sql.query('SAVEPOINT area_delete');
+ assert.equal((await comm(adminUser,'DELETE',{action:'area_manage',id:added.data.id,confirm:true})).code,409);
+ await sql.query('ROLLBACK TO SAVEPOINT area_delete');
+ // Recurrence advances on its date even if the previous task was not completed.
+ const source=(await sql.query("INSERT INTO tasks(assignee,assignee_id,created_by,due_date,title,recurrence,status) VALUES('Editor',2,1,(now() AT TIME ZONE 'America/Cuiaba')::date-1,'Recorrente','diária','andamento') RETURNING id"))[0];
+ const run=await reconcileRoutines(sql,editorUser);assert.equal(run.created,1);
+ const child=(await sql.query('SELECT * FROM tasks WHERE generated_from=$1',[source.id]))[0];
+ assert.equal(child.status,'todo');assert.equal(child.progress,0);assert.equal(child.created_by,1);assert.equal(child.assignee_id,2);
+ assert.equal((await reconcileRoutines(sql,editorUser)).created,0);
+ assert.equal((await sql.query("SELECT count(*)::int AS n FROM notifications WHERE task_id=$1 AND type='overdue'",[source.id]))[0].n,1);
+ assert.equal((await sql.query('SELECT status FROM tasks WHERE id=$1',[source.id]))[0].status,'andamento');
+ await sql.query("DELETE FROM notifications WHERE type='overdue'");
  // Keep existing notification-related fixtures independent.
  await sql.query("DELETE FROM notifications WHERE type='communication'");
  await ensureGovernance(sql);await ensureAutomations(sql);await ensureWorkflows(sql);await ensureForms(sql);await ensureExchange(sql);
