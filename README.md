@@ -1,6 +1,10 @@
 <div align="center">
 
-# ◒ agend.a 2.0
+<img src="dist/brand-icon.svg" width="80" height="80" alt="Logo Agend.a" />
+
+# Agend.a
+
+### Insumos-hub
 
 **Work OS · Gestão de atividades, processos, dados e integrações**
 
@@ -11,7 +15,7 @@ Uma plataforma de trabalho modular inspirada na organização dos Work OS: da at
 ![Frontend](https://img.shields.io/badge/Frontend-JavaScript-168353?style=flat-square)
 ![Deployment](https://img.shields.io/badge/Infraestrutura-Vercel-123b2a?style=flat-square)
 
-[Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Dados](#modelo-de-dados) · [API](#api-rest) · [Instalação](#instalação-e-execução) · [Qualidade](#qualidade-e-publicação)
+[Acessar aplicação](https://agend-a.vercel.app/) · [Meu dia](#meu-dia--execução-diária) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Dados](#modelo-de-dados) · [API](#api-rest) · [Instalação](#instalação-e-execução) · [Qualidade](#qualidade-e-publicação)
 
 </div>
 
@@ -21,17 +25,48 @@ A agend.a reúne gestão de atividades tradicionais e quadros configuráveis em 
 
 A aplicação utiliza interface web em português, tema claro/escuro com identidade verde, funções Node.js serverless e PostgreSQL. Não exige um framework de frontend ou um servidor permanente para a aplicação web.
 
-**Estado da versão:** implementação inicial dos módulos abaixo; a aprovação de testes automatizados não equivale à homologação de todos os fluxos com dados reais. O módulo legado permanece separado dos Boards dinâmicos; não há migração automática das tarefas antigas. A disponibilidade em produção depende da configuração do projeto Vercel e do banco correto.
+**Release de referência:** [`671c370`](https://github.com/FortunatoE/Agend.a/commit/671c370600f0d9c9d7e14a3255f4dca8b4d7e13c) — [PR #5](https://github.com/FortunatoE/Agend.a/pull/5), com [deployment Vercel bem-sucedido](https://vercel.com/fortunato2/agend-a/Eqjt5n7MMjcS2GTnemLPYVw53Cp4) e [pipeline aprovada](https://github.com/FortunatoE/Agend.a/actions/runs/45748775661). A confirmação de deploy não substitui homologação autenticada e monitoramento. Atividades tradicionais e Boards dinâmicos continuam sendo modelos separados.
+
+## Meu dia — execução diária
+
+A primeira tela após o login responde à pergunta **“O que preciso fazer hoje?”**. Mesmo para administradores, os registros são pessoais; a Visão geral permanece disponível para acompanhamento da equipe. A exceção de navegação é o link interno de formulário.
+
+```mermaid
+flowchart TD
+ A[Login autenticado] --> B[Meu dia]
+ B --> C[Atividades de hoje]
+ B --> D[Pendências anteriores]
+ B --> E[Recados e lembretes]
+ B --> F[Progresso e conclusões]
+ C --> G[Concluir atividade]
+ D --> G
+ G --> H[API de tarefas: autorização]
+ H --> I[PostgreSQL: status e timestamp]
+ I --> J[Atualizar Meu dia, Kanban e calendário]
+ E --> K[Abrir comunicado ou marcar Feito]
+ K --> L[Registro individual no servidor]
+```
+
+| Indicador | Definição |
+|---|---|
+| Para hoje | Atividades pessoais não concluídas com prazo igual ao dia atual |
+| Atrasadas | Atividades pessoais não concluídas com prazo anterior ao dia atual |
+| Concluídas hoje | Atividades pessoais ainda concluídas cujo `completed_at` pertence ao dia atual |
+| Comunicados pendentes | Recados e lembretes recebidos sem confirmação de conclusão |
+| Progresso diário | Atividades com prazo hoje e status concluído / total de atividades com prazo hoje |
+
+O dia civil é calculado em `America/Cuiaba`. A conclusão de uma pendência antiga hoje aparece em Concluídas hoje, mas não altera o denominador de atividades previstas para hoje. Reabrir uma atividade limpa o timestamp de conclusão atual. Não se inventam horários históricos ausentes.
 
 ## Funcionalidades
 
 | Módulo | Funcionalidades implementadas | Limites da versão |
 |---|---|---|
-| Atividades legadas | Visão geral, quadro, Kanban, calendário, rotinas recorrentes, relatórios, checklists, comentários, histórico e anexos | Permissões globais; estrutura separada dos Boards |
-| Workspaces e Boards | Ambientes, quadros, grupos, registros, campos configuráveis, modelos | Administração centralizada; sem organizações multi-tenant |
+| Atividades tradicionais | Visão geral, quadro, Kanban, calendário, rotinas, relatórios, checklist, comentários, histórico e anexos | Acesso por responsável e edição cadastral por autoria; separado dos Boards |
+| Meu dia | Agenda pessoal, pendências, conclusão rápida, comunicados e progresso | Escopo pessoal, inclusive para administradores |
+| Workspaces e Boards | Ambientes, quadros, grupos, registros, campos, modelos, edição de nome/descrição, arquivamento/restauração | Exclusão definitiva somente de quadros arquivados sem uso/dependências; sem multi-tenant |
 | Tabela | Edição inline, pesquisa sem acentos, filtros por grupo/status, ordenação, paginação de 25/50/100 | Paginação local; não reduz todo o payload de rede |
-| Kanban | Status em colunas, movimentação por arraste ou seletor, comentários | Usa o primeiro campo de status |
-| Calendário | Grade mensal, campo de data selecionável, navegação por mês | Semana/dia no módulo legado; Board dinâmico mensal |
+| Kanban | Arraste ou seletor de status; etiquetas responsivas; ciclos recorrentes e histórico nas atividades tradicionais | Boards dinâmicos usam o primeiro campo de status |
+| Calendário | Anual, mensal, semanal e diário nas atividades tradicionais; matriz mensal administrativa e semanal na Visão geral; grade mensal nos Boards | Marcações representam prazos e status; não histórico de execução diária |
 | Gantt | Datas de início/fim, duração inclusiva, conflitos de dependências | Sem caminho crítico ou reprogramação automática |
 | Workload | Agrupamento por responsável textual, esforço, capacidade e sobrecarga | Capacidade uniforme; sem cadastro de disponibilidade |
 | Dashboards | KPIs de diversos Boards, resumo por status e campos numéricos | Até 20 indicadores; preferências no navegador |
@@ -40,7 +75,8 @@ A aplicação utiliza interface web em português, tema claro/escuro com identid
 | Workflows | Etapas ordenadas, decisões Sim/Não, ações, histórico e rollback | Sem canvas livre, aprovação humana persistente ou espera |
 | Forms | Formulário autenticado, campos obrigatórios, grupo de destino, protocolo | Sem acesso anônimo ou edição de definições publicadas |
 | Governança | Perfis por workspace/Board, validação no servidor, auditoria | Não é isolamento completo por organização ou RLS |
-| Colaboração | Comentários e menções em registros dinâmicos | Anexos dinâmicos e grupos de usuários pendentes |
+| Colaboração | Comentários e menções em registros dinâmicos; recados, lembretes com recibos e anotações com escopo | Sem envio agendado de comunicados, anexos em Boards ou grupos de usuários |
+| Configurações | Senha pessoal; administração de usuários e CRUD de áreas | Exclusão de áreas vinculadas bloqueada |
 | Planilhas | CSV/TSV e XLSX, mapeamento, prévia, importação e exportação | Importação cria registros; sem upsert por planilha |
 | API REST | Chaves restritas, GET, POST, PATCH, paginação, idempotência | Sem exclusão externa |
 | Eventos e webhooks | Feed por cursor, entrega assinada, retries, monitoramento | Destinos e agendador dependem de infraestrutura |
@@ -65,7 +101,11 @@ A navegação de cada Board agrupa **Visualizações**, **Operações** e **Admi
 
 | Camada | Tecnologia / arquivos | Responsabilidade |
 |---|---|---|
-| Interface | `dist/index.html`, CSS e módulos JS | Autenticação visual, navegação, edição e relatórios |
+| Interface | `dist/index.html`, `product-experience.css`, `product-experience.js`, `brand-icon.svg` | Identidade, navegação, componentes, acessibilidade e temas |
+| Agenda pessoal | `my-day.js`, `task-views.js`, `team-calendar.js`, `activity-experience.js`, `agenda-settings.js` | Execução diária, calendários, rotinas e configurações |
+| Comunicação | `dist/communication.js`, `api/communication.js` | Recados, recibos, anotações e gestão de áreas |
+| Domínio de tarefas | `task-ownership.js`, `task-schedule.js`, `task-recurrence-db.js`, `task-completion-db.js`, `agenda-areas.js` | Autoria, responsável, recorrência, timestamp de conclusão e catálogo |
+| Ciclo de vida de quadros | `dist/board-management.js`, `lib/work-board-management.js` | Edição, arquivamento, restauração e exclusão protegida |
 | Estado do Board | `dist/workspaces.js`, `board-core.js`, `board-experience.js` | Dados autorizados, filtros, tabela, Kanban e operações |
 | Visualizações | `analytics-core.js`, `advanced-views.js` | Calendário, cronograma, capacidade e KPIs |
 | API | `api/workspaces.js`, APIs legadas em `api/` | Roteamento, autenticação, validação e persistência |
@@ -86,9 +126,15 @@ Agend.a/
 │   ├── _core.js                # Banco, autenticação e bootstrap legado
 │   ├── auth.js
 │   ├── tasks.js
+│   ├── communication.js
 │   └── workspaces.js           # Entrada principal do Work OS
 ├── dist/                      # Frontend servido pela Vercel
 │   ├── index.html
+│   ├── brand-icon.svg
+│   ├── my-day.js / task-views.js / team-calendar.js
+│   ├── activity-experience.js / agenda-settings.js
+│   ├── communication.js / board-management.js
+│   ├── product-experience.js / product-experience.css
 │   ├── security.js
 │   ├── workspaces.js
 │   ├── board-core.js
@@ -120,7 +166,7 @@ Os nomes unidos por barras acima indicam arquivos separados. Os diagramas são r
 | Entidade | Responsabilidade e vínculo |
 |---|---|
 | `workspaces` | Ambiente de trabalho; pode ser compartilhado ou restrito |
-| `work_boards` | Pertence a um workspace |
+| `work_boards` | Pertence a um workspace; nome, descrição e `archived_at` |
 | `work_groups` | Classificação opcional dos registros de um Board |
 | `work_fields` | Definição de campo por Board; tipo e configuração JSONB |
 | `work_items` | Registro com título, Board, grupo, valores JSONB e identificador externo opcional |
@@ -136,7 +182,11 @@ Os nomes unidos por barras acima indicam arquivos separados. Os diagramas são r
 | `work_event_counters` / `work_sync_events` | Sequência e eventos persistentes por Board |
 | `work_webhook_subscriptions` / `work_webhook_attempts` | Inscrições, leases, cursores e tentativas de entrega |
 | `app_users` / `app_sessions` | Usuários e sessões compartilhados com o módulo legado |
-| `tasks` e tabelas auxiliares | Atividades tradicionais e sua colaboração |
+| `tasks` e tabelas auxiliares | Atividades tradicionais: `assignee_id`, `created_by`, `recurrence_config`, `generated_from`, `completed_at` |
+| `agenda_areas` | Catálogo de áreas; nome único e ID estável |
+| `agenda_area_members` | Vínculos explícitos de usuários e áreas |
+| `agenda_communications` / `agenda_recipients` | Comunicados, destinatários, `seen_at` e `done_at` |
+| `agenda_notes` | Anotações compartilhadas com escopo de visibilidade |
 
 Campos dinâmicos são armazenados por ID em `work_items.values`:
 
@@ -191,6 +241,20 @@ O lote só é gravado após a validação; a criação e o histórico do lote co
 
 ## Segurança e governança
 
+### Atividades tradicionais
+
+| Ação | Administrador | Colaborador criador e responsável | Colaborador somente responsável |
+|---|:---:|:---:|:---:|
+| Consultar atividade | Sim | Sim | Sim |
+| Alterar dados cadastrais | Sim | Conforme permissão | Não |
+| Atualizar andamento/concluir | Sim | Conforme permissão | Conforme permissão |
+| Excluir | Sim | Conforme permissão | Não |
+| Atribuir a terceiros | Sim | Não | Não |
+
+O servidor aplica o vínculo de responsável às consultas e mutações. Um colaborador não recebe acesso às atividades de terceiros por alterar filtros ou IDs. Autoria desconhecida não concede edição cadastral. A guia Meu dia é pessoal também para administradores. Notas por área exigem vínculo explícito, e comunicados são restritos ao destinatário.
+
+### Boards dinâmicos
+
 | Perfil | Consulta e comentários | Criação e edição | Exclusão | Administração |
 |---|:---:|:---:|:---:|:---:|
 | Administrador | Sim | Sim | Sim | Sim |
@@ -198,7 +262,7 @@ O lote só é gravado após a validação; a criação e o histórico do lote co
 | Editor | Sim | Conforme flags globais | Não | Não |
 | Leitor | Sim | Não | Não | Não |
 
-O perfil efetivo corresponde ao menor nível entre o Workspace e o Board. Escopos restritos exigem um membro explícito; escopos compartilhados mantêm o acesso anterior. A remoção de uma permissão explícita em um ambiente compartilhado restaura o perfil padrão. Administradores mantêm acesso global.
+O perfil efetivo corresponde ao menor nível entre o Workspace e o Board. Escopos restritos exigem um membro explícito; escopos compartilhados mantêm o acesso anterior. A remoção de uma permissão explícita em um ambiente compartilhado restaura o perfil padrão. Administradores mantêm acesso global aos quadros ativos; quadros arquivados são retirados das verificações normais de acesso, com administração de ciclo de vida separada.
 
 - Sessões autenticadas, senhas com scrypt e salt e tokens de sessão armazenados como hash.
 - Validação de permissões no servidor, incluindo ID direto, formulários, importação, alterações em massa e relações.
@@ -285,6 +349,7 @@ Configure as variáveis de ambiente no projeto correto, separadas entre desenvol
 | `BLOB_READ_WRITE_TOKEN` | Armazenamento dos anexos legados, quando configurado |
 | `AGEND_WEBHOOK_DESTINATIONS` | JSON de aliases para URL HTTPS e segredo; opcional |
 | `AGEND_WEBHOOK_WORKER_SECRET` | Segredo independente do worker, mínimo de 32 caracteres; opcional |
+| `CRON_SECRET` | Autenticação do cron diário de recorrência; necessário para execução autônoma |
 | `AGEND_TEST_DATABASE_URL` | Somente CI/teste local descartável; nunca apontar para produção |
 
 Exemplo de formato de configuração de webhooks (valores fictícios, não usar em produção):
@@ -307,7 +372,7 @@ A pipeline `Work OS validation` possui três jobs:
 | browser | Chromium com Playwright e API simulada: navegação, filtros, paginação, seleção e Kanban |
 | dependency-audit | Auditoria de dependências de produção, bloqueio de vulnerabilidades altas |
 
-Na revisão de código validada antes desta documentação, o GitHub Actions confirmou **47 testes aprovados, 0 falhas, 0 ignorados**, sucesso do teste Chromium e **0 vulnerabilidades reportadas** pela auditoria. [Evidência da execução](https://github.com/FortunatoE/Agend.a/actions/runs/45616436248). Isso não garante ausência de vulnerabilidades futuras nem substitui testes end-to-end com o banco real.
+A revisão funcional do [PR #5](https://github.com/FortunatoE/Agend.a/pull/5) foi aprovada nos três jobs (`validation`, `browser` e `dependency-audit`): [execução 45748775661](https://github.com/FortunatoE/Agend.a/actions/runs/45748775661). O [commit de release 671c370](https://github.com/FortunatoE/Agend.a/commit/671c370600f0d9c9d7e14a3255f4dca8b4d7e13c) também recebeu status Vercel de sucesso. Isso não garante ausência de vulnerabilidades futuras nem substitui testes end-to-end com o banco real.
 
 ### Testes locais
 
@@ -334,6 +399,10 @@ O teste PostgreSQL recusa URLs fora de localhost/127.0.0.1 com o nome de banco `
 6. Configurar destinos/agendador apenas se forem utilizados, com autorização e segredos apropriados.
 
 O merge no GitHub é uma atualização de código; **não é confirmação de deploy**. A produção precisa ter um projeto e banco autorizados.
+
+### Estratégia de deployments
+
+O `vercel.json` mantém `outputDirectory: dist` e `git.deploymentEnabled` com `main: true` e `**: false`. Commits de desenvolvimento e documentação devem ser agrupados em branches para não disparar builds automáticos intermediários. Alterações integradas à `main`, inclusive documentação, podem disparar deploy; não há regra específica de exclusão de README configurada.
 
 ## Limitações e roadmap
 
@@ -373,7 +442,7 @@ A aba de calendário **Equipe · mensal**, exclusiva de administradores, apresen
 - **Visão geral:** matriz semanal de segunda a domingo, com atividade, responsável, situação, notas, marcações por prazo e navegação entre semanas. O administrador vê o conjunto autorizado global e o colaborador apenas os registros atribuídos a ele. A matriz representa ocorrências reais cadastradas; não inventa execuções futuras ou datas de conclusão.
 - **Autoria:** `tasks.created_by` separa o criador do responsável. Administradores podem gerenciar qualquer atividade. Colaboradores com permissão de edição podem editar dados cadastrais somente quando são criadores e responsáveis; continuam podendo registrar andamento, concluir, marcar checklist e anexar evidências nas atividades próprias atribuídas. Alterações da definição do checklist e exclusões são protegidas. Atividades anteriores recuperam autoria somente quando há evidência inequívoca no histórico de criação; autoria desconhecida permanece protegida. O vínculo antigo de responsável é feito por correspondência inequívoca do nome.
 - **Recorrência:** `recurrence_config` armazena dias da semana (0 = domingo, 6 = sábado), dia do mês (1–31) e mês (1–12). Prazo inicial é a primeira ocorrência escolhida; novas ocorrências são geradas na data programada, independentemente da conclusão anterior. Dias inexistentes usam o último dia do mês, preservando o dia originalmente configurado. Configurações antigas usam a data do prazo como referência. Próxima ocorrência herda responsável, criador e configuração; restrição única em generated_from impede geração duplicada. O processamento diário e a reconciliação no acesso criam ocorrências vencidas/atuais em lotes limitados; a execução diária requer CRON_SECRET configurado.
-- **Workspaces:** administrador pode renomear ambientes e quadros e excluir ambientes vazios, após confirmação. Exclusão de ambiente com quadros e exclusão direta de quadros permanecem bloqueadas para proteger registros e dependências.
+- **Workspaces:** administrador pode renomear ambientes e quadros e excluir ambientes vazios, após confirmação. Exclusão de ambiente com quadros permanece bloqueada. Quadros podem ser arquivados e restaurados; a exclusão definitiva exige arquivamento, confirmação pelo nome e ausência de registros, histórico e dependências.
 - **Comunicação:** administrador envia recados e lembretes imediatos a um colaborador ativo ou ao conjunto de colaboradores ativos no momento do envio. Destinatários são registrados individualmente. O corpo da mensagem é disponibilizado após abrir o comunicado; o primeiro clique em Abrir e em Feito registra data/hora do servidor. Os registros são idempotentes e o painel administrativo lista os destinatários e horários. A confirmação de abertura não prova que o conteúdo foi efetivamente lido; Feito é uma declaração do colaborador.
 - **Anotações:** visibilidade para equipe, área específica ou administradores e autor. O acesso de área depende de vínculo explícito configurado pelo administrador na central Comunicação, e não do filtro escolhido na interface. O servidor aplica o escopo em toda consulta. Autores e administradores mantêm acesso às notas. Os Boards dinâmicos conservam suas permissões próprias.
 - **Limites:** lista de até 200 comunicados/notas recentes por consulta; sem envio agendado, e-mail, push externo ou histórico de versões de anotações nesta etapa.
@@ -396,3 +465,12 @@ A aba de calendário **Equipe · mensal**, exclusiva de administradores, apresen
 - Exclusão definitiva exige quadro arquivado, digitação do nome exato e ausência de registros, histórico de itens, regras, formulários, importações, integrações e referências de outros quadros. Campos/grupos e permissões de um quadro sem uso podem ser removidos; a exclusão é registrada na auditoria. Quadros com dados devem permanecer arquivados. Não há exclusão em cascata de dados operacionais por esta ação.
 - **Kanban:** responsável e prazo em uma linha flexível independente, etiquetas de atraso/recorrência em um bloco separado com quebra automática, seletor de status em sua própria linha. Os estilos são válidos nos dois temas.
 - Testes PostgreSQL cobrem timestamps e transições, arquivamento/restauração, permissões e proteção de exclusão; Chromium cobre tela inicial pessoal, conclusão, layout do Kanban e ações de quadro com APIs simuladas. Antes de publicar, mantenha backup e valide as migrações em ambiente controlado.
+
+## Histórico de releases
+
+| Marco | Alterações | Referência |
+|---|---|---|
+| Work OS | Quadros, campos, automações, formulários, governança e integrações | [PR #1](https://github.com/FortunatoE/Agend.a/pull/1) |
+| Product Experience | Design System verde, navegação, ícones e busca | [PR #3](https://github.com/FortunatoE/Agend.a/pull/3) |
+| Agenda e comunicação | Privacidade, recorrência independente, áreas, comunicação e marca | [PR #4](https://github.com/FortunatoE/Agend.a/pull/4) |
+| Meu dia | Home pessoal, conclusão real, ciclo de vida de quadros e Kanban | [PR #5](https://github.com/FortunatoE/Agend.a/pull/5) |
