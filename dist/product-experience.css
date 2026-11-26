@@ -69,3 +69,19 @@ input[type=checkbox],input[type=radio]{accent-color:var(--green)}
 @media(max-width:760px){.ws-side .ws-link{width:auto;max-width:100%}.ws-side .plain{justify-content:center}.ui-detail-meta{grid-template-columns:1fr 1fr}.ui-search-results .plain{min-height:44px}}
 
 .ui-loading{min-height:180px}.ui-skeleton{height:18px;background:var(--soft);border-radius:6px;margin:12px 0;max-width:65%}.ui-skeleton:nth-child(3){max-width:48%}.ui-skeleton:nth-child(4){max-width:57%}
+
+/* Daily execution and board lifecycle */
+.tk-board .card{display:flex;flex-direction:column;gap:7px;min-width:0;height:auto}
+.tk-board .card .meta{display:flex;position:static;align-items:flex-start;justify-content:space-between;gap:6px 12px;flex-wrap:wrap;margin:0;min-width:0}
+.tk-board .card .meta span{min-width:0;overflow-wrap:anywhere}.tk-board .card .meta span:last-child{margin-left:auto}
+.tk-board .card p{margin:0;overflow-wrap:anywhere}.tk-board .card select{margin-top:2px;min-width:0;width:100%}
+.tk-badges{display:flex;flex-wrap:wrap;align-items:center;gap:6px;position:static;margin:0;min-width:0}
+.tk-overdue,.tk-recurrence{display:inline-flex;align-items:center;position:static;float:none;max-width:100%;white-space:normal;overflow-wrap:anywhere;font-weight:650;font-size:11px;line-height:1.35;border-radius:5px;padding:4px 7px}
+.tk-overdue{color:var(--red);background:var(--danger-bg);border:1px solid var(--red)}.tk-recurrence{color:var(--green);background:var(--soft)}
+#myday>.panel,#myday>.stats{margin-bottom:16px}.day-intro h2{font-size:23px}.day-progress progress{width:100%;height:12px;accent-color:var(--green)}
+.day-list-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}.day-list-head h2{margin:0}.day-list-head .ui-icon{color:var(--green)}
+.day-task{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--line)}.day-task:last-child{border-bottom:0}
+.day-task-info{flex:1;min-width:160px;overflow-wrap:anywhere}.day-task-info small{display:block}.day-task-info p{white-space:pre-wrap;margin:5px 0}.day-task-title{display:block;text-align:left;background:transparent;color:var(--ink);border:0;font-weight:700;padding:0;min-height:24px}.day-task-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.board-sidebar-entry{display:flex;align-items:flex-start;gap:4px;min-width:0}.board-sidebar-entry>.ws-link,.board-sidebar-entry>.sub{flex:1;min-width:0}.board-sidebar-entry>.sub{overflow-wrap:anywhere;padding:6px}
+.board-action-menu{flex:none}.board-action-menu summary{cursor:pointer;list-style:none;padding:8px;border-radius:6px;line-height:1;color:var(--ink)}.board-action-menu summary::-webkit-details-marker{display:none}.board-action-menu[open]{flex:1}.board-action-list{display:grid;gap:4px;margin-top:5px}.board-action-list button{font-size:11px;padding:6px;white-space:normal}.board-description{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:760px){.day-task-info{flex-basis:100%}.day-task-meta{width:100%;justify-content:flex-start}.day-task-meta button{margin-left:auto}}

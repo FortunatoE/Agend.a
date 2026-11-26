@@ -15,6 +15,7 @@ const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {templates,normalizeBulk,bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {decodeWorkbook,encodeWorkbook}=require('../lib/work-xlsx');
 const {ensureWebhooks,processWebhook,manageWebhooks}=require('../lib/work-webhook-db');
+const {ensureBoardManagement,manageBoard}=require('../lib/work-board-management');
 const {workerAuthorized}=require('../lib/work-webhook-rules');
 const types=new Set(['text','number','date','checkbox','status','relation','lookup','rollup','formula']);
 const clean=(v,n=120)=>typeof v==='string'?v.trim().slice(0,n):'';
@@ -56,6 +57,7 @@ module.exports=async(req,res)=>{
  await ensureSync(sql);
  await ensureEvents(sql);
  await ensureWebhooks(sql);
+ await ensureBoardManagement(sql);
  if(req.method==='GET'){
  let [workspaces,boards,fields,items,groups]=await Promise.all(['workspaces','work_boards','work_fields','work_items','work_groups'].map(t=>sql.query('SELECT * FROM '+t+(t==='workspaces'?' WHERE $1::int IS NOT NULL':t==='work_boards'?' WHERE work_board_role($1,id)>0':' WHERE work_board_role($1,board_id)>0')+' ORDER BY id',[user.id])));
  const [automations,automationRuns]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_automations ORDER BY id'),sql.query('SELECT * FROM work_automation_runs ORDER BY id DESC LIMIT 200')]):[[],[]];
@@ -69,11 +71,13 @@ module.exports=async(req,res)=>{
  fields=fields.filter(f=>visible.has(f.board_id));items=items.filter(i=>visible.has(i.board_id));groups=groups.filter(g=>visible.has(g.board_id));forms=forms.filter(f=>visible.has(f.board_id));
  const safe=redactRestrictedFields(fields,computeItems(items,fields),visible);
  const [workspaceMembers,boardMembers,audit]=user.is_admin?await Promise.all([sql.query('SELECT * FROM work_workspace_members'),sql.query('SELECT * FROM work_board_members'),sql.query('SELECT a.*,u.name AS actor_name FROM work_audit a LEFT JOIN app_users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 200')]):[[],[],[]];
- return res.status(200).json({workspaces,boards,fields:safe.fields,items:safe.items,groups,permissions,workspaceMembers,boardMembers,audit,automations,automationRuns,workflows,workflowRuns,forms,formSubmissions});
+ const archivedBoards=user.is_admin?await sql.query('SELECT id,workspace_id,name,description,archived_at FROM work_boards WHERE archived_at IS NOT NULL ORDER BY name,id'):[];
+ return res.status(200).json({workspaces,boards,archivedBoards,fields:safe.fields,items:safe.items,groups,permissions,workspaceMembers,boardMembers,audit,automations,automationRuns,workflows,workflowRuns,forms,formSubmissions});
  }
  const d=body(req);const action=d.action;
  const permitted=async(bid,verb)=>canBoard(user,await getBoardRole(sql,user,bid),verb);
- if(['workspace_manage','board_manage'].includes(action)){
+ if(action==='board_manage')return manageBoard(sql,user,d,req.method,res);
+ if(action==='workspace_manage'){
  if(!user.is_admin)return forbidden(res);
  const target=id(d.id);if(!target)return res.status(400).json({error:'Identificação inválida.'});
  const workspace=action==='workspace_manage',table=workspace?'workspaces':'work_boards';
@@ -209,7 +213,7 @@ module.exports=async(req,res)=>{
  if(!user.is_admin)return forbidden(res);
  if(req.method==='POST'){
  const board=id(d.board_id);
- if(!board||!(await sql.query('SELECT id FROM work_boards WHERE id=$1',[board])).length)return res.status(400).json({error:'Quadro inválido.'});
+ if(!board||!(await sql.query('SELECT id FROM work_boards WHERE id=$1 AND archived_at IS NULL',[board])).length)return res.status(400).json({error:'Quadro inválido.'});
  const [fields,groups]=await Promise.all([sql.query('SELECT * FROM work_fields WHERE board_id=$1',[board]),sql.query('SELECT id,board_id FROM work_groups WHERE board_id=$1',[board])]);
  let form;try{form=normalizeForm(d,board,fields,groups)}catch(e){return res.status(400).json({error:e.message})}
  const result=await sql.query('INSERT INTO work_forms(board_id,name,description,fields,group_id,created_by) VALUES($1,$2,$3,$4::jsonb,$5,$6) RETURNING *',[board,form.name,form.description,JSON.stringify(form.fields),form.group_id,user.id]);
@@ -274,7 +278,7 @@ module.exports=async(req,res)=>{
  else if(action==='field'){
  if(!user.is_admin)return forbidden(res);
  const boardId=id(d.board_id);if(!boardId||!types.has(d.type))return res.status(400).json({error:'Quadro ou tipo inválido.'});
- const [boards,fields]=await Promise.all([sql.query('SELECT id FROM work_boards'),sql.query('SELECT * FROM work_fields')]);
+ const [boards,fields]=await Promise.all([sql.query('SELECT id FROM work_boards WHERE archived_at IS NULL'),sql.query('SELECT * FROM work_fields')]);
  if(!boards.some(b=>b.id===boardId))return res.status(400).json({error:'Quadro não encontrado.'});
  let config;try{config=validateConfig(d.type,d.config,boardId,boards,fields)}catch(e){return res.status(400).json({error:e.message})}
  rows=await sql.query('INSERT INTO work_fields(board_id,name,type,config) VALUES($1,$2,$3,$4::jsonb) RETURNING *',[boardId,name,d.type,JSON.stringify(config)]);

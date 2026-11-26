@@ -65,7 +65,7 @@ function legacyKanban(){
  for(const t of items){
  const c=node('article',undefined,'card '+(t.priority==='alta'?'high':t.priority==='média'?'medium':''));c.dataset.taskId=t.id;
  const title=wsButton(t.title,()=>detail(t.id).catch(e=>toast(e.message)),'tk-title');c.append(title,node('p',t.description||''));
- const meta=node('div',undefined,'meta');meta.append(node('span',t.assignee||''),node('span',fmt(t.due_date)));c.append(meta);if(AgendaDates.overdue(t))c.append(node('span','Prazo vencido','notice'));if(t.recurrence!=='não se repete')c.append(node('small',t.recurrence,'badge'));
+ const meta=node('div',undefined,'meta');meta.append(node('span',t.assignee||''),node('span',fmt(t.due_date)));c.append(meta);const badges=node('div',undefined,'tk-badges');if(AgendaDates.overdue(t))badges.append(node('span','Prazo vencido','tk-overdue'));if(t.recurrence!=='não se repete')badges.append(node('small',t.recurrence,'tk-recurrence'));if(badges.childElementCount)c.append(badges);
  if(editable){c.draggable=!taskMovePending;c.ondragstart=e=>{taskDragId=t.id;e.dataTransfer.setData('text/plain',String(t.id));e.dataTransfer.effectAllowed='move';c.classList.add('tk-dragging')};c.ondragend=()=>{taskDragId=null;c.classList.remove('tk-dragging');board.querySelectorAll('.tk-target').forEach(x=>x.classList.remove('tk-target'))};
  const sel=node('select');sel.setAttribute('aria-label','Mover '+t.title);for(const st of statuses){const opt=node('option',labels[st]);opt.value=st;sel.append(opt)}sel.value=s;sel.disabled=taskMovePending;sel.onchange=()=>{const target=sel.value;sel.value=s;moveLegacyTask(t.id,target)};c.append(sel)}
  col.append(c);

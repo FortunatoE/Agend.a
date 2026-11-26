@@ -13,6 +13,7 @@ const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-d
 const {ensureTaskOwnership,findTask,resolveAssignee}=require('../lib/task-ownership');
 const {handleCommunication}=require('../api/communication');
 const {reconcileRoutines}=require('../lib/task-recurrence-db');
+const {ensureBoardManagement,manageBoard}=require('../lib/work-board-management');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -26,8 +27,8 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  CREATE TABLE notifications(id SERIAL PRIMARY KEY,user_id INT REFERENCES app_users(id),task_id INT,type TEXT,title TEXT,message TEXT);
  CREATE TABLE workspaces(id SERIAL PRIMARY KEY,name TEXT);
  CREATE TABLE work_boards(id SERIAL PRIMARY KEY,workspace_id INT REFERENCES workspaces(id),name TEXT);
- CREATE TABLE work_fields(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT,type TEXT,config JSONB DEFAULT '{}');
- CREATE TABLE work_groups(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),name TEXT);
+ CREATE TABLE work_fields(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT,type TEXT,config JSONB DEFAULT '{}');
+ CREATE TABLE work_groups(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id) ON DELETE CASCADE,name TEXT);
  CREATE TABLE work_items(id SERIAL PRIMARY KEY,board_id INT REFERENCES work_boards(id),group_id INT REFERENCES work_groups(id),title TEXT CHECK(length(title)<=120),values JSONB DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT NOW());
  INSERT INTO app_users(name,is_admin) VALUES('Admin',true),('Editor',false),('Leitor',false);
  INSERT INTO workspaces(name) VALUES('Teste');
@@ -35,12 +36,16 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  INSERT INTO work_fields(board_id,name,type) VALUES(1,'Status','status');
  INSERT INTO work_groups(board_id,name) VALUES(1,'Finalizados');`);
  // Exercise ownership migration against duplicate and unmatched legacy names.
- await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE,area TEXT NOT NULL DEFAULT 'Planejamento',title TEXT NOT NULL DEFAULT 'Rotina',description TEXT DEFAULT '',priority TEXT DEFAULT 'normal',recurrence TEXT NOT NULL DEFAULT 'não se repete',status TEXT NOT NULL DEFAULT 'todo',progress INTEGER DEFAULT 0,generated_from INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL); CREATE TABLE task_activity(id SERIAL PRIMARY KEY,task_id INT REFERENCES tasks(id),user_id INT REFERENCES app_users(id),detail TEXT); CREATE UNIQUE INDEX notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'; INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
+ await sql.query("CREATE TABLE tasks(id SERIAL PRIMARY KEY,assignee TEXT NOT NULL,due_date DATE,area TEXT NOT NULL DEFAULT 'Planejamento',title TEXT NOT NULL DEFAULT 'Rotina',description TEXT DEFAULT '',priority TEXT DEFAULT 'normal',recurrence TEXT NOT NULL DEFAULT 'não se repete',status TEXT NOT NULL DEFAULT 'todo',progress INTEGER DEFAULT 0,generated_from INTEGER UNIQUE REFERENCES tasks(id) ON DELETE SET NULL); CREATE TABLE task_activity(id SERIAL PRIMARY KEY,task_id INT REFERENCES tasks(id),user_id INT REFERENCES app_users(id),detail TEXT,created_at TIMESTAMPTZ DEFAULT NOW()); CREATE UNIQUE INDEX notifications_overdue_once ON notifications(user_id,task_id) WHERE type='overdue'; INSERT INTO app_users(name) VALUES('Duplicado'),('duplicado'); INSERT INTO tasks(assignee,due_date) VALUES(' Editor ','2026-11-25'),('Leitor','2026-11-26'),('Duplicado','2026-11-27'),('Sem cadastro','2026-11-28')");
  await ensureTaskOwnership(sql);await ensureTaskOwnership(sql);
  const adminUser={id:1,name:'Admin',is_admin:true},editorUser={id:2,name:'Editor',is_admin:false},readerUser={id:3,name:'Leitor',is_admin:false};
  assert.equal((await findTask(sql,editorUser,1)).assignee_id,2);
  assert.equal(await findTask(sql,editorUser,2),null);
  assert.equal(await findTask(sql,readerUser,1),null);
+ const completed=(await sql.query("UPDATE tasks SET status='concluída' WHERE id=1 RETURNING completed_at"))[0];assert.ok(completed.completed_at);
+ assert.deepEqual((await sql.query("UPDATE tasks SET status='concluída' WHERE id=1 RETURNING completed_at"))[0],completed);
+ assert.equal((await sql.query("UPDATE tasks SET status='todo' WHERE id=1 RETURNING completed_at"))[0].completed_at,null);
+
  assert.equal((await findTask(sql,adminUser,3)).assignee_id,null);
  assert.equal((await findTask(sql,adminUser,4)).assignee_id,null);
  assert.deepEqual(await resolveAssignee(sql,editorUser,{}),{id:2,name:'Editor'});
@@ -171,5 +176,27 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  assert.equal((await call(sync.token,'PATCH',{...baseSync,request_id:'00000000-0000-4000-8000-000000000012'})).code,403);
  await sql.query("DELETE FROM work_workspace_members WHERE workspace_id=1 AND user_id=2");
  assert.equal((await call(readOnly.token,'GET')).code,401);
+ // Board lifecycle: archived boards cannot be accessed via role checks; deletion is conservative.
+ await ensureBoardManagement(sql);await ensureBoardManagement(sql);
+ async function manage(user,method,body){const res=response();await manageBoard(sql,user,body,method,res);return res}
+ const empty=(await sql.query("INSERT INTO work_boards(workspace_id,name) VALUES(1,'Vazio') RETURNING id"))[0].id;
+ await sql.query("INSERT INTO work_fields(board_id,name,type) VALUES($1,'Campo','text')",[empty]);
+ assert.equal((await manage(editorUser,'PATCH',{id:empty,name:'Não permitido'})).code,403);
+ assert.equal((await manage(adminUser,'PATCH',{id:empty,name:'Vazio editado',description:'Descrição'})).data.description,'Descrição');
+ assert.equal((await manage(adminUser,'DELETE',{id:empty,confirm:true,confirmation:'Vazio editado'})).code,409);
+ assert.equal((await manage(adminUser,'PATCH',{id:empty,mode:'archive'})).code,200);
+ assert.equal((await sql.query('SELECT work_board_role(1,$1) AS role',[empty]))[0].role,0);
+ assert.equal((await manage(adminUser,'PATCH',{id:empty,mode:'restore'})).code,200);
+ assert.equal((await sql.query('SELECT work_board_role(1,$1) AS role',[empty]))[0].role,3);
+ await manage(adminUser,'PATCH',{id:empty,mode:'archive'});
+ assert.equal((await manage(adminUser,'DELETE',{id:empty,confirm:true,confirmation:'errado'})).code,400);
+ await sql.query("INSERT INTO work_fields(board_id,name,type,config) VALUES(1,'Referência externa','relation',jsonb_build_object('target_board_id',$1::int))",[empty]);
+ assert.equal((await manage(adminUser,'DELETE',{id:empty,confirm:true,confirmation:'Vazio editado'})).code,409);
+ await sql.query("DELETE FROM work_fields WHERE name='Referência externa'");
+ assert.equal((await manage(adminUser,'DELETE',{id:empty,confirm:true,confirmation:'Vazio editado'})).code,200);
+ await manage(adminUser,'PATCH',{id:1,mode:'archive'});
+ assert.equal((await manage(adminUser,'DELETE',{id:1,confirm:true,confirmation:'Quadro'})).code,409);
+ assert.ok((await sql.query('SELECT count(*)::int n FROM work_items WHERE board_id=1'))[0].n>0);
+ await manage(adminUser,'PATCH',{id:1,mode:'restore'});
  }finally{try{await sql.query('ROLLBACK')}finally{await client.end()}}
 });

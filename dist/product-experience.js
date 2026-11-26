@@ -42,7 +42,7 @@ function uiButtonIcon(label){
  return exact[label]||(label.startsWith('+ ')?'plus':null);
 }
 function uiIconOnly(b,icon,label){b.replaceChildren(uiIcon(icon));b.title=label;b.setAttribute('aria-label',label);return b}
-const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',communication:'message',settings:'settings'};
+const uiNav={myday:'sun',overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',communication:'message',settings:'settings'};
 let uiToastTimer,uiTaskFilter='all',uiReturnFocus=null,uiDialog=null,uiLastFocus=null;
 function uiToast(message,kind='info'){
  const host=$('#toast');clearTimeout(uiToastTimer);host.replaceChildren(uiIcon(kind==='error'?'alert':kind==='success'?'check':'info'),node('span',String(message)));
@@ -78,7 +78,7 @@ function uiInit(){
  const search=wsButton('',uiSearch,'ui-search');search.append(uiIcon('search'),node('span','Buscar','ui-nav-text'),node('kbd','Ctrl K'));search.setAttribute('aria-label','Busca global');header.insertBefore(search,header.querySelector('.nav'));
  const nav=header.querySelector('.nav');nav.setAttribute('aria-label','Navegação principal');
  for(const b of nav.querySelectorAll('button[data-view]')){const title=b.textContent;uiDecorate(b,uiNav[b.dataset.view],title);b.lastChild.className='ui-nav-text';b.setAttribute('aria-label',title);b.title=title}
- for(const [id,label] of [['overview','Início'],['workspaces','Espaços de trabalho'],['table','Atividades'],['routines','Gestão']])nav.insertBefore(node('div',label,'ui-nav-label'),nav.querySelector('[data-view="'+id+'"]'));
+ for(const [id,label] of [['myday','Início'],['workspaces','Espaços de trabalho'],['table','Atividades'],['routines','Gestão']])nav.insertBefore(node('div',label,'ui-nav-label'),nav.querySelector('[data-view="'+id+'"]'));
  uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
  const pass=$('#loginPassword'),wrap=node('span',undefined,'ui-password-row');pass.replaceWith(wrap);wrap.append(pass);const show=wsButton('',()=>{const visible=pass.type==='password';pass.type=visible?'text':'password';uiIconOnly(show,'eye',visible?'Ocultar senha':'Mostrar senha');show.setAttribute('aria-pressed',String(visible))},'ui-password-toggle');uiIconOnly(show,'eye','Mostrar senha');show.setAttribute('aria-pressed','false');wrap.append(show);
  $('#loginError').setAttribute('role','alert');

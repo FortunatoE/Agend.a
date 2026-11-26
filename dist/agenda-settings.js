@@ -19,5 +19,5 @@ function renderRoutineList(){
 let refreshTimer=null,refreshBusy=false;
 function startAgendaRefresh(){
  if(refreshTimer)return;
- refreshTimer=setInterval(async()=>{if(refreshBusy||document.hidden||!current||$('#modal').classList.contains('open')||!['overview','kanban','calendar','routines','table'].includes(view)||document.activeElement?.matches('input,select,textarea')||typeof taskDragId!=='undefined'&&taskDragId!==null||typeof taskMovePending!=='undefined'&&taskMovePending)return;refreshBusy=true;try{await load()}catch(e){console.warn('Atualização automática indisponível')}finally{refreshBusy=false}},60000);
+ refreshTimer=setInterval(async()=>{if(refreshBusy||typeof dayBusy!=='undefined'&&dayBusy||document.hidden||!current||$('#modal').classList.contains('open')||!['myday','overview','kanban','calendar','routines','table'].includes(view)||document.activeElement?.matches('input,select,textarea')||typeof taskDragId!=='undefined'&&taskDragId!==null||typeof taskMovePending!=='undefined'&&taskMovePending)return;refreshBusy=true;try{await load()}catch(e){console.warn('Atualização automática indisponível')}finally{refreshBusy=false}},60000);
 }
