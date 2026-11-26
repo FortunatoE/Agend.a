@@ -73,6 +73,21 @@ module.exports=async(req,res)=>{
  }
  const d=body(req);const action=d.action;
  const permitted=async(bid,verb)=>canBoard(user,await getBoardRole(sql,user,bid),verb);
+ if(['workspace_manage','board_manage'].includes(action)){
+ if(!user.is_admin)return forbidden(res);
+ const target=id(d.id);if(!target)return res.status(400).json({error:'Identificação inválida.'});
+ const workspace=action==='workspace_manage',table=workspace?'workspaces':'work_boards';
+ if(req.method==='PATCH'){
+ const name=clean(d.name);if(!name)return res.status(400).json({error:'Informe o nome.'});
+ try{const rows=await sql.query('UPDATE '+table+' SET name=$1 WHERE id=$2 RETURNING id,name',[name,target]);return rows.length?res.status(200).json(rows[0]):res.status(404).json({error:'Não encontrado.'})}catch(e){if(e.code==='23505')return res.status(409).json({error:'Já existe um ambiente com esse nome.'});throw e}
+ }
+ if(req.method==='DELETE'){
+ if(d.confirm!==true)return res.status(400).json({error:'Confirme a exclusão.'});
+ if(!workspace)return res.status(405).json({error:'Exclusão de quadros ainda não disponível; preserve os dados.'});
+ try{const rows=await sql.query('DELETE FROM workspaces w WHERE w.id=$1 AND NOT EXISTS(SELECT 1 FROM work_boards b WHERE b.workspace_id=w.id) RETURNING id',[target]);return rows.length?res.status(200).json({ok:true}):res.status(409).json({error:'Workspace inexistente ou com quadros. A exclusão está bloqueada para preservar os dados.'})}catch(e){if(e.code==='23503')return res.status(409).json({error:'Workspace possui dependências.'});throw e}
+ }
+ return res.status(405).end();
+ }
  if(action==='bulk'){
  if(req.method!=='PATCH')return res.status(405).end();
  const bid=id(d.board_id);let config;try{config=normalizeBulk(d)}catch(e){return res.status(400).json({error:e.message})}
