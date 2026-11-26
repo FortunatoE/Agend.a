@@ -79,7 +79,7 @@ function uiInit(){
  const nav=header.querySelector('.nav');nav.setAttribute('aria-label','Navegação principal');
  for(const b of nav.querySelectorAll('button[data-view]')){const title=b.textContent;uiDecorate(b,uiNav[b.dataset.view],title);b.lastChild.className='ui-nav-text';b.setAttribute('aria-label',title);b.title=title}
  for(const [id,label] of [['overview','Início'],['workspaces','Espaços de trabalho'],['table','Atividades'],['routines','Gestão']])nav.insertBefore(node('div',label,'ui-nav-label'),nav.querySelector('[data-view="'+id+'"]'));
- uiIconOnly($('#password'),'key','Alterar senha');uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
+ uiIconOnly($('#logout'),'logout','Sair');uiNotificationBadge();uiRefreshShell();uiDecorate($('#newTask'),'plus','Nova atividade');
  const pass=$('#loginPassword'),wrap=node('span',undefined,'ui-password-row');pass.replaceWith(wrap);wrap.append(pass);const show=wsButton('',()=>{const visible=pass.type==='password';pass.type=visible?'text':'password';uiIconOnly(show,'eye',visible?'Ocultar senha':'Mostrar senha');show.setAttribute('aria-pressed',String(visible))},'ui-password-toggle');uiIconOnly(show,'eye','Mostrar senha');show.setAttribute('aria-pressed','false');wrap.append(show);
  $('#loginError').setAttribute('role','alert');
  const modal=$('#modal'),app=$('#app');
