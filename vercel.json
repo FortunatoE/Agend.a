@@ -5,5 +5,11 @@
       "**": false,
       "main": true
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/tasks?worker=recurrence",
+      "schedule": "0 4 * * *"
+    }
+  ]
 }
