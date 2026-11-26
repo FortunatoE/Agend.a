@@ -11,6 +11,7 @@ const {ensureSync,ensureEvents}=require('../lib/work-sync-db');
 const {bulkWrite,createTemplate}=require('../lib/work-board-ops');
 const {ensureWebhooks,claimWebhook,finishWebhook}=require('../lib/work-webhook-db');
 const {ensureTaskOwnership,findTask,resolveAssignee}=require('../lib/task-ownership');
+const {handleCommunication}=require('../api/communication');
 const url=process.env.AGEND_TEST_DATABASE_URL;
 test('PostgreSQL: migrations, board authorization, atomic import, triggers and rollback',{skip:!url},async()=>{
  const parsed=new URL(url);
@@ -48,6 +49,33 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  await sql.query('UPDATE tasks SET assignee_id=3,assignee=$1 WHERE id=1',['Leitor']);
  assert.equal(await findTask(sql,editorUser,1),null);
  assert.equal((await findTask(sql,readerUser,1)).id,1);
+ // Communication permissions, receipt idempotency and scoped notes.
+ function commResponse(){return {code:0,data:null,status(c){this.code=c;return this},json(d){this.data=d;return this},end(){return this}}}
+ async function comm(user,method,body={}){const res=commResponse();await handleCommunication(sql,user,{method,body},res);return res}
+ assert.equal((await comm(editorUser,'POST',{action:'send',title:'x',message:'x',kind:'recado',audience:'all'})).code,403);
+ const sent=await comm(adminUser,'POST',{action:'send',title:'Aviso',message:'Conferir',kind:'lembrete',audience:'one',user_id:2});assert.equal(sent.code,201);assert.equal(sent.data.recipients,1);
+ const msgId=sent.data.id;
+ assert.equal((await comm(readerUser,'GET')).data.received.length,0);
+ assert.equal((await comm(readerUser,'PATCH',{action:'done',id:msgId})).code,404);
+ const initial=(await comm(editorUser,'GET')).data.received[0];assert.equal(initial.message,null);assert.equal(initial.seen_at,null);
+ const seen=await comm(editorUser,'PATCH',{action:'seen',id:msgId});assert.equal(seen.code,200);assert.ok(seen.data.seen_at);assert.equal(seen.data.done_at,null);
+ assert.equal((await comm(editorUser,'GET')).data.received[0].message,'Conferir');
+ const done=await comm(editorUser,'PATCH',{action:'done',id:msgId});assert.ok(done.data.done_at);
+ const againDone=await comm(editorUser,'PATCH',{action:'done',id:msgId});assert.deepEqual(againDone.data,done.data);
+ assert.equal((await comm(adminUser,'GET')).data.sent[0].recipients[0].id,2);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Área',message:'Restrito',audience:'area',area:'Planejamento'})).code,403);
+ assert.equal((await comm(adminUser,'POST',{action:'membership',user_id:2,area:'Planejamento',enabled:true})).code,200);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Área',message:'Restrito',audience:'area',area:'Planejamento'})).code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Admin',message:'Privado',audience:'admins'})).code,201);
+ assert.equal((await comm(editorUser,'POST',{action:'note',title:'Equipe',message:'Geral',audience:'team'})).code,201);
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,1);
+ assert.equal((await comm(adminUser,'GET')).data.notes.length,3);
+ await comm(adminUser,'POST',{action:'membership',user_id:3,area:'Planejamento',enabled:true});
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,2);
+ await comm(adminUser,'POST',{action:'membership',user_id:3,area:'Planejamento',enabled:false});
+ assert.equal((await comm(readerUser,'GET')).data.notes.length,1);
+ // Keep existing notification-related fixtures independent.
+ await sql.query("DELETE FROM notifications WHERE type='communication'");
  await ensureGovernance(sql);await ensureAutomations(sql);await ensureWorkflows(sql);await ensureForms(sql);await ensureExchange(sql);
  await sql.query("UPDATE workspaces SET restricted=true; UPDATE work_boards SET restricted=true; INSERT INTO work_workspace_members VALUES(1,2,'editor'),(1,3,'viewer'); INSERT INTO work_board_members VALUES(1,2,'editor'),(1,3,'manager')");
  assert.equal((await sql.query('SELECT work_board_role(2,1) AS r'))[0].r,2);
