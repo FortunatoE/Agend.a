@@ -1,6 +1,6 @@
 'use strict';
 const {session,body,unauth,forbidden}=require('./_core');
-const areas=['Administrativo','Logística · Defensivo','Logística · Adubo','Planejamento'];
+const {ensureAreas,listAreas,manageArea}=require('../lib/agenda-areas');
 const validId=v=>Number.isSafeInteger(v)&&v>0;
 const clean=(v,n)=>typeof v==='string'?v.trim().slice(0,n):'';
 async function ensureCommunication(sql){
@@ -15,20 +15,22 @@ async function ensureCommunication(sql){
  END; $migration$`);
 }
 async function handleCommunication(sql,user,req,res){
- await ensureCommunication(sql);
+ await ensureCommunication(sql);await ensureAreas(sql);
+ const areaRecords=await listAreas(sql),areas=areaRecords.map(a=>a.name);
  if(req.method==='GET'){
  const received=await sql.query(`SELECT c.id,c.author_id,c.title,c.kind,c.created_at,CASE WHEN r.seen_at IS NOT NULL THEN c.message ELSE NULL END AS message,r.seen_at,r.done_at FROM agenda_communications c JOIN agenda_recipients r ON r.communication_id=c.id WHERE r.user_id=$1 ORDER BY c.id DESC LIMIT 200`,[user.id]);
  const sent=user.is_admin?await sql.query(`SELECT c.*,COALESCE(jsonb_agg(jsonb_build_object('id',r.user_id,'name',u.name,'seen_at',r.seen_at,'done_at',r.done_at) ORDER BY u.name) FILTER(WHERE r.user_id IS NOT NULL),'[]'::jsonb) recipients FROM agenda_communications c LEFT JOIN agenda_recipients r ON r.communication_id=c.id LEFT JOIN app_users u ON u.id=r.user_id GROUP BY c.id ORDER BY c.id DESC LIMIT 200`):[];
  const notes=await sql.query(`SELECT n.*,COALESCE(u.name,'Usuário') author FROM agenda_notes n LEFT JOIN app_users u ON u.id=n.author_id WHERE $2::boolean OR n.author_id=$1 OR n.audience='team' OR (n.audience='area' AND EXISTS(SELECT 1 FROM agenda_area_members m WHERE m.user_id=$1 AND m.area=n.area)) ORDER BY n.id DESC LIMIT 200`,[user.id,Boolean(user.is_admin)]);
  const members=await sql.query(user.is_admin?'SELECT m.user_id,m.area FROM agenda_area_members m':'SELECT m.user_id,m.area FROM agenda_area_members m WHERE m.user_id=$1',user.is_admin?[]:[user.id]);
- return res.status(200).json({received,sent,notes,members,areas});
+ return res.status(200).json({received,sent,notes,members,areas,areaRecords});
  }
  const d=body(req);
+ if(d.action==='area_manage')return manageArea(sql,user,d,req.method,res);
  if(req.method==='POST'&&d.action==='send'){
  if(!user.is_admin)return forbidden(res);
  const title=clean(d.title,150),message=clean(d.message,5000);
  if(!title||!message||!['recado','lembrete'].includes(d.kind)||!['all','one'].includes(d.audience)||d.audience==='one'&&!validId(d.user_id))return res.status(400).json({error:'Informe o título, mensagem e destinatário.'});
- const rows=await sql.query(`WITH targets AS MATERIALIZED (SELECT id FROM app_users WHERE active AND NOT is_admin AND ($4::boolean OR id=$5)), c AS (INSERT INTO agenda_communications(author_id,title,message,kind) SELECT $1,$2,$3,$6 WHERE EXISTS(SELECT 1 FROM targets) RETURNING id), r AS (INSERT INTO agenda_recipients(communication_id,user_id) SELECT c.id,t.id FROM c CROSS JOIN targets RETURNING communication_id,user_id), n AS (INSERT INTO notifications(user_id,task_id,type,title,message) SELECT user_id,NULL,'communication','Novo comunicado','Consulte a central de recados e lembretes.' FROM r) SELECT c.id,(SELECT count(*)::int FROM r) recipients FROM c`,[user.id,title,message,d.audience==='all',d.audience==='all'?null:d.user_id,d.kind]);
+ const rows=await sql.query(`WITH targets AS MATERIALIZED (SELECT id FROM app_users WHERE active AND NOT is_admin AND ($4::boolean OR id=$5)), c AS (INSERT INTO agenda_communications(author_id,title,message,kind) SELECT $1,$2,$3,$6 WHERE EXISTS(SELECT 1 FROM targets) RETURNING id), r AS (INSERT INTO agenda_recipients(communication_id,user_id) SELECT c.id,t.id FROM c CROSS JOIN targets t RETURNING communication_id,user_id), n AS (INSERT INTO notifications(user_id,task_id,type,title,message) SELECT user_id,NULL,'communication','Novo comunicado','Consulte a central de recados e lembretes.' FROM r) SELECT c.id,(SELECT count(*)::int FROM r) recipients FROM c`,[user.id,title,message,d.audience==='all',d.audience==='all'?null:d.user_id,d.kind]);
  return rows.length?res.status(201).json(rows[0]):res.status(400).json({error:'Nenhum colaborador ativo selecionado.'});
  }
  if(req.method==='PATCH'&&['seen','done'].includes(d.action)){
