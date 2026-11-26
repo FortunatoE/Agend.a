@@ -42,7 +42,7 @@ function uiButtonIcon(label){
  return exact[label]||(label.startsWith('+ ')?'plus':null);
 }
 function uiIconOnly(b,icon,label){b.replaceChildren(uiIcon(icon));b.title=label;b.setAttribute('aria-label',label);return b}
-const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',settings:'settings'};
+const uiNav={overview:'dashboard',workspaces:'folders',table:'table',kanban:'kanban',calendar:'calendar',routines:'repeat',reports:'chart',communication:'message',settings:'settings'};
 let uiToastTimer,uiTaskFilter='all',uiReturnFocus=null,uiDialog=null,uiLastFocus=null;
 function uiToast(message,kind='info'){
  const host=$('#toast');clearTimeout(uiToastTimer);host.replaceChildren(uiIcon(kind==='error'?'alert':kind==='success'?'check':'info'),node('span',String(message)));
@@ -105,7 +105,7 @@ function uiDashboard(){
  const upcoming=D.upcoming(a).slice(0,8);for(const t of upcoming){const b=wsButton('',()=>detail(t.id).catch(e=>uiToast(e.message,'error')),'item ui-item'),body=node('div',undefined,'ui-item-body');body.append(node('b',t.title),node('small',(t.area||'')+' · '+(t.assignee||'Sem responsável')));b.append(uiIcon('calendar'),body,node('time',fmt(t.due_date)),uiIcon('arrow'));list.append(b)}if(!upcoming.length)list.append(node('p','Nenhuma entrega futura nesta área.','empty'));
  dist.append(node('h2','Distribuição por status'));const bar=node('div',undefined,'ui-distribution');bar.setAttribute('aria-hidden','true');dist.append(bar);
  const colors=['var(--muted)','var(--info)','var(--amber)','var(--green)'];for(const [i,s] of statuses.entries()){const count=a.filter(t=>t.status===s).length,c=s==='concluída'?'var(--green)':s==='andamento'?'var(--info)':colors[i%colors.length];if(count){const seg=node('span');seg.style.flex=String(count);seg.style.background=c;bar.append(seg)}const row=node('div',undefined,'ui-status-row'),sw=node('span',undefined,'ui-swatch');sw.style.background=c;row.append(sw,node('span',labels[s]||s),node('strong',String(count)));dist.append(row)}
- dist.append(node('p','Atrasos são uma condição de prazo e podem ocorrer em diferentes status.','sub'));grid.append(next,dist);host.replaceChildren(stats,grid);
+ dist.append(node('p','Atrasos são uma condição de prazo e podem ocorrer em diferentes status.','sub'));grid.append(next,dist);host.replaceChildren(stats,grid);weeklyOverview(host);
 }
 function uiReports(){
  const data=scoped(),host=$('#reports'),areasPanel=node('div',undefined,'panel'),people=node('div',undefined,'panel');
