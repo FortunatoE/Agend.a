@@ -1,12 +1,14 @@
-const { body, session, allowed, activity, notifyAssignee, unauth, forbidden } = require('./_core');
+const { body, session, allowed, activity, notifyAssignee, unauth, forbidden, database, bootstrap } = require('./_core');
 const {findTask,resolveAssignee,accessParams}=require('../lib/task-ownership');
 const {key:dateKey}=require('../dist/task-dates');
 const {nextDate,normalizeSchedule,canManage,changesMetadata}=require('../lib/task-schedule');
+const {reconcileRoutines}=require('../lib/task-recurrence-db');
 module.exports = async (req,res) => {
   try {
+    if(req.query?.worker==='recurrence'){if(req.method!=='GET'||!process.env.CRON_SECRET||req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return unauth(res);const sql=database();await bootstrap(sql);return res.status(200).json(await reconcileRoutines(sql,{id:null,is_admin:true}));}
     const {sql,user}=await session(req); if(!user) return unauth(res);
     res.setHeader('Cache-Control','private, no-store');
-    if(req.method==='GET') return res.status(200).json(await sql.query('SELECT * FROM tasks WHERE ($2::boolean OR assignee_id=$1) ORDER BY due_date ASC NULLS LAST,id DESC',accessParams(user)));
+    if(req.method==='GET'){await reconcileRoutines(sql,user);return res.status(200).json(await sql.query('SELECT t.*,EXISTS(SELECT 1 FROM tasks c WHERE c.generated_from=t.id) AS has_next FROM tasks t WHERE ($2::boolean OR t.assignee_id=$1) ORDER BY t.due_date ASC NULLS LAST,t.id DESC',accessParams(user)));}
     const data=body(req);
     if(req.method==='POST') {
       if(!allowed(user,'create')) return forbidden(res);
@@ -34,15 +36,7 @@ module.exports = async (req,res) => {
       const updated = rows[0];if(!updated)return res.status(404).json({error:'Atividade não encontrada.'});
       if (updated.assignee_id !== current.assignee_id) await notifyAssignee(sql,updated,user.id,'assigned','Atividade atribuída a você',`${user.name} atribuiu “${updated.title}” para você.`);
       else if (nextStatus !== current.status) await notifyAssignee(sql,updated,user.id,'status','Status atualizado',`A atividade “${updated.title}” avançou para ${nextStatus}.`);
-      let generated = null;
-      if (nextStatus === 'concluída' && updated.recurrence !== 'não se repete' && updated.due_date) {
-        const nextDue = nextDate(updated.due_date, updated.recurrence,updated.recurrence_config);
-        const created = await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence,status,progress,generated_from,assignee_id,created_by,recurrence_config) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,$10,$11,$12::jsonb) ON CONFLICT (generated_from) DO NOTHING RETURNING *',[
-          updated.title,updated.description,updated.area,updated.assignee,nextDue,updated.priority,updated.recurrence,'todo',current.id,updated.assignee_id,updated.created_by,JSON.stringify(normalizeSchedule(updated.recurrence,updated.recurrence_config,updated.due_date))
-        ]);
-        generated = created[0] || null;
-        if (generated) await activity(sql,current.id,user.id,`Gerou automaticamente a próxima rotina para ${nextDue}`);
-      }
+      const generated=null; // New occurrences are generated on their scheduled date, not on completion.
       await activity(sql,id,user.id,status&&status!==current.status?`Alterou status para ${nextStatus}`:'Editou a atividade'); return res.status(200).json({...updated,generated});
     }
     if(req.method==='DELETE') {
