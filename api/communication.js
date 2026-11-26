@@ -14,10 +14,8 @@ async function ensureCommunication(sql){
  CREATE TABLE IF NOT EXISTS agenda_notes(id SERIAL PRIMARY KEY,author_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,title TEXT NOT NULL,message TEXT NOT NULL,audience TEXT NOT NULL CHECK(audience IN ('team','area','admins')),area TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK((audience='area')=(area IS NOT NULL)));
  END; $migration$`);
 }
-module.exports=async(req,res)=>{
- try{
- res.setHeader('Cache-Control','private, no-store');
- const {sql,user}=await session(req);if(!user)return unauth(res);await ensureCommunication(sql);
+async function handleCommunication(sql,user,req,res){
+ await ensureCommunication(sql);
  if(req.method==='GET'){
  const received=await sql.query(`SELECT c.*,r.seen_at,r.done_at FROM agenda_communications c JOIN agenda_recipients r ON r.communication_id=c.id WHERE r.user_id=$1 ORDER BY c.id DESC LIMIT 200`,[user.id]);
  const sent=user.is_admin?await sql.query(`SELECT c.*,COALESCE(jsonb_agg(jsonb_build_object('id',r.user_id,'name',u.name,'seen_at',r.seen_at,'done_at',r.done_at) ORDER BY u.name) FILTER(WHERE r.user_id IS NOT NULL),'[]'::jsonb) recipients FROM agenda_communications c LEFT JOIN agenda_recipients r ON r.communication_id=c.id LEFT JOIN app_users u ON u.id=r.user_id GROUP BY c.id ORDER BY c.id DESC LIMIT 200`):[];
@@ -51,6 +49,7 @@ module.exports=async(req,res)=>{
  return res.status(200).json({ok:true});
  }
  return res.status(405).json({error:'Ação indisponível.'});
- }catch(e){console.error(e);return res.status(500).json({error:'Não foi possível acessar a comunicação.'})}
-};
+}
+module.exports=async(req,res)=>{try{res.setHeader('Cache-Control','private, no-store');const {sql,user}=await session(req);if(!user)return unauth(res);return await handleCommunication(sql,user,req,res)}catch(e){console.error(e);return res.status(500).json({error:'Não foi possível acessar a comunicação.'})}};
 module.exports.ensureCommunication=ensureCommunication;
+module.exports.handleCommunication=handleCommunication;
