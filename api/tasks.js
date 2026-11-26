@@ -2,18 +2,22 @@ const { body, session, allowed, activity, notifyAssignee, unauth, forbidden, dat
 const {findTask,resolveAssignee,accessParams}=require('../lib/task-ownership');
 const {key:dateKey}=require('../dist/task-dates');
 const {nextDate,normalizeSchedule,canManage,changesMetadata}=require('../lib/task-schedule');
+const {ensureCommunication}=require('./communication');
+const {ensureAreas,listAreas}=require('../lib/agenda-areas');
 const {reconcileRoutines}=require('../lib/task-recurrence-db');
 module.exports = async (req,res) => {
   try {
-    if(req.query?.worker==='recurrence'){if(req.method!=='GET'||!process.env.CRON_SECRET||req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return unauth(res);const sql=database();await bootstrap(sql);return res.status(200).json(await reconcileRoutines(sql,{id:null,is_admin:true}));}
+    if(req.query?.worker==='recurrence'){if(req.method!=='GET'||!process.env.CRON_SECRET||req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return unauth(res);const sql=database();await bootstrap(sql);await ensureCommunication(sql);await ensureAreas(sql);return res.status(200).json(await reconcileRoutines(sql,{id:null,is_admin:true}));}
     const {sql,user}=await session(req); if(!user) return unauth(res);
-    res.setHeader('Cache-Control','private, no-store');
+    res.setHeader('Cache-Control','private, no-store');await ensureCommunication(sql);await ensureAreas(sql);
+    if(req.method==='GET'&&req.query?.areas==='1')return res.status(200).json(await listAreas(sql));
     if(req.method==='GET'){await reconcileRoutines(sql,user);return res.status(200).json(await sql.query('SELECT t.*,EXISTS(SELECT 1 FROM tasks c WHERE c.generated_from=t.id) AS has_next FROM tasks t WHERE ($2::boolean OR t.assignee_id=$1) ORDER BY t.due_date ASC NULLS LAST,t.id DESC',accessParams(user)));}
     const data=body(req);
     if(req.method==='POST') {
       if(!allowed(user,'create')) return forbidden(res);
       const {title,description='',area,assignee,due_date,priority='normal',recurrence='não se repete'}=data;
       if(!title||!area||!dateKey(due_date)) return res.status(400).json({error:'Título, área, responsável e prazo são obrigatórios.'});
+      if(!(await sql.query('SELECT id FROM agenda_areas WHERE name=$1',[area])).length)return res.status(400).json({error:'Área inválida.'});
       const owner=await resolveAssignee(sql,user,data);if(!owner)return res.status(400).json({error:'Responsável inválido ou não autorizado.'});
       let config;try{config=normalizeSchedule(recurrence,data.recurrence_config,due_date)}catch(e){return res.status(400).json({error:e.message})}
       const rows=await sql.query('INSERT INTO tasks (title,description,area,assignee,due_date,priority,recurrence,assignee_id,created_by,recurrence_config) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) RETURNING *',[title,description,area,owner.name,dateKey(due_date),priority,recurrence,owner.id,user.id,JSON.stringify(config)]);
@@ -27,6 +31,7 @@ module.exports = async (req,res) => {
       const current=await findTask(sql,user,id); if(!current) return res.status(404).json({error:'Atividade não encontrada.'});
       const metadata=changesMetadata(data);if(metadata&&!canManage(user,current))return forbidden(res);
       const owner=await resolveAssignee(sql,user,data,current);if(!owner)return forbidden(res);
+      if(area!=null&&!(await sql.query('SELECT id FROM agenda_areas WHERE name=$1',[area])).length)return res.status(400).json({error:'Área inválida.'});
       if(due_date!=null&&!dateKey(due_date))return res.status(400).json({error:'Prazo inválido.'});
       const nextStatus=status||current.status;if(!['todo','andamento','revisão','concluída'].includes(nextStatus)||!Number.isFinite(Number(progress??current.progress)))return res.status(400).json({error:'Status ou progresso inválido.'});const nextProgress=nextStatus==='concluída'?100:Math.round(Math.max(0,Math.min(100,Number(progress ?? current.progress))));
       let config=current.recurrence_config||{};if(metadata){try{config=normalizeSchedule(recurrence??current.recurrence,data.recurrence_config??(recurrence&&recurrence!==current.recurrence?{}:config),due_date??current.due_date)}catch(e){return res.status(400).json({error:e.message})}}
