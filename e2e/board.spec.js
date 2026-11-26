@@ -42,7 +42,7 @@ test('product experience: icon names, dashboard drill-down, search, dialog keybo
  const json=p==='/api/auth'?{user}:p==='/api/tasks'?tasks:p==='/api/notifications'?{notifications:[]}:p==='/api/team'?[{id:1,name:'João'},{id:2,name:'Ana'}]:p==='/api/workspaces'?{workspaces:[{id:1,name:'Equipe'}],boards:[{id:1,workspace_id:1,name:'Planejamento mensal'}],fields:[],items:[],groups:[],permissions:{1:'editor'},forms:[]}:p==='/api/task-detail'?{checklist:[],comments:[],attachments:[],history:[]}:[];
  await route.fulfill({json});
  });
- await page.goto(origin);
+ await page.goto(origin);await page.locator('[data-view="overview"]').click();
  await expect(page.locator('#overview .ui-kpi')).toHaveCount(4);
  await expect(page.getByRole('button',{name:'Notificações',exact:true})).toBeVisible();
  await expect(page.locator('#notifications svg')).toHaveCount(1);
@@ -78,10 +78,10 @@ test('team calendar is admin-only and personal activity screens hide other users
  await page.route('**/api/**',async route=>{const p=new URL(route.request().url()).pathname;
  const user={id:2,name:'João',username:'joao',is_admin:admin,can_create:true,can_edit:true,can_delete:false};
  await route.fulfill({json:p==='/api/auth'?{user}:p==='/api/tasks'?tasks:p==='/api/team'?[{id:2,name:'João'},{id:3,name:'Ana'}]:p==='/api/notifications'?{notifications:[]}:[]})});
- await page.goto(origin);await expect(page.locator('#overview .ui-kpi').first()).toContainText('1');
+ await page.goto(origin);await page.locator('[data-view="overview"]').click();await expect(page.locator('#overview .ui-kpi').first()).toContainText('1');
  await page.locator('[data-view="calendar"]').click();await expect(page.getByRole('button',{name:'Equipe · mensal',exact:true})).toHaveCount(0);
  await expect(page.locator('#calendar')).not.toContainText('Tarefa alheia');
- admin=true;await page.reload();await expect(page.locator('#overview .ui-kpi').first()).toContainText('2');
+ admin=true;await page.reload();await page.locator('[data-view="overview"]').click();await expect(page.locator('#overview .ui-kpi').first()).toContainText('2');
  await page.locator('[data-view="calendar"]').click();const cal=page.locator('#calendar');
  await expect(cal.getByRole('heading',{name:'Acompanhamento da equipe'})).toBeVisible();
  await expect(cal.locator('.team-cal-table tbody tr')).toHaveCount(2);
@@ -101,10 +101,52 @@ test('weekly dashboard, creator edit rules and communication acknowledgements',a
  if(p==='/api/auth')json={user};else if(p==='/api/tasks')json=tasks;else if(p==='/api/team')json=[{id:2,name:'João'},{id:3,name:'Ana'}];else if(p==='/api/notifications')json={notifications:[]};else if(p==='/api/task-detail')json={checklist:[],comments:[],attachments:[],history:[]};
  else if(p==='/api/communication'){if(route.request().method()==='PATCH'){const d=route.request().postDataJSON();patches.push(d.action);message.seen_at=message.seen_at||new Date().toISOString();message.message='Conferir o saldo físico';if(d.action==='done')message.done_at=new Date().toISOString();json={seen_at:message.seen_at,done_at:message.done_at}}else json={received:[message],sent:[],notes:[],areas:['Planejamento'],members:[{user_id:2,area:'Planejamento'}]}}
  await route.fulfill({json})});
- await page.goto(origin);const week=page.locator('.overview-week-table');
+ await page.goto(origin);await page.locator('[data-view="overview"]').click();const week=page.locator('.overview-week-table');
  await expect(week.locator('tbody tr')).toHaveCount(2);await expect(week.locator('thead th')).toHaveCount(11);await expect(week).not.toContainText('Atividade de terceiro');
  await week.getByRole('button',{name:'Atribuída pelo administrador',exact:true}).click();let d=page.getByRole('dialog');await expect(d.getByText(/dados protegidos/)).toBeVisible();await expect(d.getByRole('button',{name:'Editar atividade',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
  await week.getByRole('button',{name:'Criada por mim',exact:true}).click();await d.getByRole('button',{name:'Editar atividade',exact:true}).click();
  await expect(d.getByRole('heading',{name:'Editar atividade'})).toBeVisible();await expect(d.getByRole('checkbox',{name:'Seg',exact:true})).toBeChecked();await expect(d.getByRole('checkbox',{name:'Qua',exact:true})).toBeChecked();await d.locator('#recurrence').selectOption('mensal');await expect(d.getByLabel('Dia do mês',{exact:true})).toBeVisible();await d.locator('#recurrence').selectOption('anual');await expect(d.getByLabel('Mês',{exact:true})).toBeVisible();await page.keyboard.press('Escape');
  await page.locator('[data-view="communication"]').click();const comm=page.locator('#communication');await expect(comm.getByRole('button',{name:'Abrir comunicado'})).toBeVisible();await expect(comm).not.toContainText('Conferir o saldo físico');await comm.getByRole('button',{name:'Abrir comunicado'}).click();await expect(comm).toContainText('Conferir o saldo físico');await comm.getByRole('button',{name:'Feito',exact:true}).click();await expect(comm.getByRole('button',{name:'Feito',exact:true})).toHaveCount(0);await expect(comm).toContainText('Visualizado:');expect(patches).toEqual(['seen','done']);expect(errors).toEqual([]);
+});
+
+test('Meu dia is personal even for admins, completes tasks, and Kanban labels do not overlap',async({page})=>{
+ const user={id:2,name:'João',username:'joao',is_admin:true,can_create:true,can_edit:true,can_delete:true},errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Cuiaba',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(p=>[p.type,p.value])),today=parts.year+'-'+parts.month+'-'+parts.day;
+ const common={area:'Planejamento',assignee:'João',assignee_id:2,status:'todo',priority:'alta',progress:0,recurrence:'semanal',description:'Descrição de teste'};
+ const tasks=[{...common,id:1,title:'Minha atividade hoje',due_date:today},{...common,id:2,title:'Minha pendência',due_date:'2020-01-01'},{...common,id:3,title:'Atividade de outra pessoa',assignee_id:3,assignee:'Ana',due_date:today}];
+ const received=[{id:1,title:'Meu recado',kind:'recado',seen_at:null,done_at:null}];
+ await page.route('**/api/**',async route=>{const url=new URL(route.request().url());let json=[];
+ if(url.pathname==='/api/auth')json={user};else if(url.pathname==='/api/tasks'){if(url.searchParams.has('areas'))json=[{id:1,name:'Planejamento'}];else if(route.request().method()==='PATCH'){const p=route.request().postDataJSON(),t=tasks.find(t=>t.id===p.id);t.status=p.status;t.completed_at=new Date().toISOString();json=t}else json=tasks}
+ else if(url.pathname==='/api/notifications')json={notifications:[]};else if(url.pathname==='/api/communication')json={received};else if(url.pathname==='/api/team')json=[user];
+ await route.fulfill({json})});
+ await page.goto(origin);const day=page.locator('#myday');
+ await expect(day).toBeVisible();await expect(day).toContainText('Minha atividade hoje');await expect(day).toContainText('Minha pendência');await expect(day).toContainText('Meu recado');await expect(day).not.toContainText('Atividade de outra pessoa');
+ await day.locator('.day-task').filter({hasText:'Minha atividade hoje'}).getByRole('button',{name:'Concluir',exact:true}).click();
+ await expect(day.locator('.day-task').filter({hasText:'Minha atividade hoje'})).toContainText('Concluída às');
+ await page.locator('[data-view="kanban"]').click();const card=page.locator('[data-task-id="2"]');
+ await expect(card.locator('.tk-overdue')).toBeVisible();await expect(card.locator('.tk-recurrence')).toBeVisible();
+ const bounds=await card.evaluate(el=>{const a=el.querySelector('.meta').getBoundingClientRect(),b=el.querySelector('.tk-badges').getBoundingClientRect(),c=el.querySelector('select').getBoundingClientRect();return {meta:a.bottom,badges:b.top,bottom:b.bottom,select:c.top}});
+ expect(bounds.badges).toBeGreaterThanOrEqual(bounds.meta);expect(bounds.select).toBeGreaterThanOrEqual(bounds.bottom);
+ await page.setViewportSize({width:390,height:844});await expect(card.locator('.tk-overdue')).toBeVisible();
+ expect(errors).toEqual([]);
+});
+test('administrative board menu edits, archives, restores and requires typed deletion',async({page})=>{
+ const user={id:1,name:'Admin',is_admin:true,can_create:true,can_edit:true,can_delete:true};
+ const board={id:1,workspace_id:1,name:'Quadro teste',description:''};let archived=false,deleted=false;
+ const requests=[];
+ await page.route('**/api/**',async route=>{const p=new URL(route.request().url()).pathname;let json=[];
+ if(p==='/api/auth')json={user};else if(p==='/api/notifications')json={notifications:[]};else if(p==='/api/communication')json={received:[]};
+ else if(p==='/api/workspaces'){if(route.request().method()==='GET')json={workspaces:[{id:1,name:'Equipe'}],boards:archived||deleted?[]:[board],archivedBoards:archived&&!deleted?[board]:[],fields:[],groups:[],items:[],permissions:{1:'manager'},forms:[]};
+ else {const d=route.request().postDataJSON();requests.push(d);if(d.mode==='archive')archived=true;else if(d.mode==='restore')archived=false;else if(route.request().method()==='DELETE')deleted=true;else Object.assign(board,{name:d.name,description:d.description});json={ok:true}}}
+ await route.fulfill({json})});
+ page.on('dialog',d=>d.accept());await page.goto(origin);await page.locator('[data-view="workspaces"]').click();const host=page.locator('#workspaces');
+ await host.getByRole('button',{name:'Editar quadro',exact:true}).last().click();const dialog=page.getByRole('dialog');await dialog.getByLabel('Nome do quadro').fill('Novo quadro');await dialog.getByLabel('Descrição').fill('Descrição nova');await dialog.getByRole('button',{name:'Salvar quadro'}).click();
+ await expect(host.getByRole('heading',{name:'Novo quadro',exact:true})).toBeVisible();
+ await host.getByLabel('Ações do quadro Novo quadro').click();await host.getByRole('button',{name:'Arquivar quadro',exact:true}).click();await expect(host.getByRole('heading',{name:'Quadros arquivados'})).toBeVisible();
+ await host.getByLabel('Ações do quadro Novo quadro').click();await host.getByRole('button',{name:'Restaurar quadro'}).click();await expect(host.getByRole('heading',{name:'Novo quadro',exact:true})).toBeVisible();
+ await host.getByLabel('Ações do quadro Novo quadro').click();await host.getByRole('button',{name:'Arquivar quadro',exact:true}).click();await expect(host.getByRole('heading',{name:'Quadros arquivados'})).toBeVisible();
+ await host.getByLabel('Ações do quadro Novo quadro').click();await host.getByRole('button',{name:'Excluir quadro',exact:true}).click();
+ await expect(dialog.getByRole('button',{name:'Excluir definitivamente'})).toBeDisabled();await dialog.getByLabel('Digite o nome exato do quadro').fill('Novo quadro');await dialog.getByRole('button',{name:'Excluir definitivamente'}).click();
+ await expect(host.getByRole('heading',{name:'Quadros arquivados'})).toHaveCount(0);expect(requests.at(-1).confirmation).toBe('Novo quadro');
 });
