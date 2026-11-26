@@ -26,7 +26,7 @@ function setupRecurrence(form,config={}){
  if(k==='anual'){month=wsSelectOptions('Mês',Array.from({length:12},(_,i)=>[i+1,AgendaDates.format('2026-'+String(i+1).padStart(2,'0')+'-01',{month:'long'})]));month.sel.value=initial.month||(date?date.getUTCMonth()+1:1);host.append(month.wrap)}
  host.append(day.wrap,node('p','Em meses mais curtos, será usado o último dia do mês.','sub'));read=()=>({day:Number(day.sel.value),...(month?{month:Number(month.sel.value)}:{})});
  }else read=()=>({});
- if(k!=='não se repete')host.append(node('p','O prazo informado é a primeira ocorrência. A próxima será criada ao concluir a atual.','sub'));
+ if(k!=='não se repete')host.append(node('p','O prazo informado é a primeira ocorrência. A próxima será criada na data programada, mesmo que a atual não esteja concluída.','sub'));
  }
  kind.onchange=()=>{initial={};draw()};draw();return ()=>read();
 }
