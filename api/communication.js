@@ -17,7 +17,7 @@ async function ensureCommunication(sql){
 async function handleCommunication(sql,user,req,res){
  await ensureCommunication(sql);
  if(req.method==='GET'){
- const received=await sql.query(`SELECT c.*,r.seen_at,r.done_at FROM agenda_communications c JOIN agenda_recipients r ON r.communication_id=c.id WHERE r.user_id=$1 ORDER BY c.id DESC LIMIT 200`,[user.id]);
+ const received=await sql.query(`SELECT c.id,c.author_id,c.title,c.kind,c.created_at,CASE WHEN r.seen_at IS NOT NULL THEN c.message ELSE NULL END AS message,r.seen_at,r.done_at FROM agenda_communications c JOIN agenda_recipients r ON r.communication_id=c.id WHERE r.user_id=$1 ORDER BY c.id DESC LIMIT 200`,[user.id]);
  const sent=user.is_admin?await sql.query(`SELECT c.*,COALESCE(jsonb_agg(jsonb_build_object('id',r.user_id,'name',u.name,'seen_at',r.seen_at,'done_at',r.done_at) ORDER BY u.name) FILTER(WHERE r.user_id IS NOT NULL),'[]'::jsonb) recipients FROM agenda_communications c LEFT JOIN agenda_recipients r ON r.communication_id=c.id LEFT JOIN app_users u ON u.id=r.user_id GROUP BY c.id ORDER BY c.id DESC LIMIT 200`):[];
  const notes=await sql.query(`SELECT n.*,COALESCE(u.name,'Usuário') author FROM agenda_notes n LEFT JOIN app_users u ON u.id=n.author_id WHERE $2::boolean OR n.author_id=$1 OR n.audience='team' OR (n.audience='area' AND EXISTS(SELECT 1 FROM agenda_area_members m WHERE m.user_id=$1 AND m.area=n.area)) ORDER BY n.id DESC LIMIT 200`,[user.id,Boolean(user.is_admin)]);
  const members=await sql.query(user.is_admin?'SELECT m.user_id,m.area FROM agenda_area_members m':'SELECT m.user_id,m.area FROM agenda_area_members m WHERE m.user_id=$1',user.is_admin?[]:[user.id]);
