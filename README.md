@@ -396,3 +396,42 @@ A aba de calendário **Equipe · mensal**, exclusiva de administradores, apresen
 - Exclusão definitiva exige quadro arquivado, digitação do nome exato e ausência de registros, histórico de itens, regras, formulários, importações, integrações e referências de outros quadros. Campos/grupos e permissões de um quadro sem uso podem ser removidos; a exclusão é registrada na auditoria. Quadros com dados devem permanecer arquivados. Não há exclusão em cascata de dados operacionais por esta ação.
 - **Kanban:** responsável e prazo em uma linha flexível independente, etiquetas de atraso/recorrência em um bloco separado com quebra automática, seletor de status em sua própria linha. Os estilos são válidos nos dois temas.
 - Testes PostgreSQL cobrem timestamps e transições, arquivamento/restauração, permissões e proteção de exclusão; Chromium cobre tela inicial pessoal, conclusão, layout do Kanban e ações de quadro com APIs simuladas. Antes de publicar, mantenha backup e valide as migrações em ambiente controlado.
+
+## Integração Microsoft To Do (piloto)
+
+A integração opcional em **Configurações → Integrações · Microsoft To Do** utiliza Microsoft Graph v1.0 e uma conta corporativa/escolar do mesmo tenant Microsoft Entra. A autenticação Agend.a existente permanece independente. Cada usuário autoriza a própria conexão; uma conta Microsoft não pode ser associada a dois usuários Agend.a.
+
+### Preparar Microsoft Entra e Vercel
+
+1. Solicite a aprovação da TI/segurança para o compartilhamento de títulos e prazos das tarefas. Crie uma App registration no [Microsoft Entra](https://entra.microsoft.com/) somente para contas do diretório organizacional (single tenant).
+2. Em Authentication, configure plataforma **Web**, não SPA, com redirect URI exata: `https://agend-a.vercel.app/api/tasks?microsoft=callback`. Para homologação, registre a URL HTTPS separada e use credenciais e banco de teste. Não use conta pessoal.
+3. Adicione permissões delegadas Microsoft Graph `Tasks.ReadWrite` e `User.Read`; o fluxo também solicita `offline_access`. Conceda consentimento administrativo somente se a política do tenant exigir.
+4. Crie um client secret com validade controlada. Configure estas variáveis no ambiente autorizado da Vercel, sem inseri-las no GitHub:
+
+| Variável | Valor |
+|---|---|
+| `MS_TODO_TENANT_ID` | Directory (tenant) ID, UUID |
+| `MS_TODO_CLIENT_ID` | Application (client) ID, UUID |
+| `MS_TODO_CLIENT_SECRET` | Valor do client secret (não o ID) |
+| `MS_TODO_ENCRYPTION_KEY` | 32 bytes aleatórios em hexadecimal, 64 caracteres |
+| `MS_TODO_REDIRECT_URI` | URL HTTPS acima, correspondente ao ambiente |
+
+Gere a chave localmente com `openssl rand -hex 32` e guarde em um gerenciador de segredos. Não compartilhe credenciais em chats. A troca dessa chave sem migração invalida os tokens criptografados. Sem configuração completa, a integração fica indisponível e não altera os demais módulos.
+
+### Escopo e comportamento
+
+- Conectar a conta, depois escolher **Sincronizar agora**. A lista privada recebe nome Agend.a — Insumos-hub com sufixo aleatório estável, para reduzir colisões. A lista não é a lista inteligente Meu Dia do Microsoft To Do.
+- Títulos, prazos, importância e status de tarefas atribuídas ao usuário são enviados em pequenos lotes de até oito registros por tentativa. A integração não envia descrição, anexos, checklist, comentários, dados de outros usuários ou Boards. Não gera recorrências no Microsoft To Do; novas ocorrências continuam sendo criadas pela Agend.a.
+- Somente tarefas abertas ainda não mapeadas são exportadas inicialmente. Tarefas mapeadas continuam sendo verificadas após conclusão. A Agend.a controla metadados e status; uma conclusão externa é importada somente se o status local permanecer igual ao último sincronizado, a tarefa ainda estiver atribuída ao mesmo usuário e houver permissão de edição. Conflitos favorecem a Agend.a. O timestamp local registra a **importação da conclusão**, não necessariamente o instante original do clique no To Do.
+- Uma preferência opt-in local habilita tentativa a cada cinco minutos com a sessão visível, em telas de atividades. Sem navegador aberto, não existe sincronização autônoma. Sem cron adicional, sem mudança de plano Vercel. Chamadas lentas e limites Graph podem reduzir a quantidade por lote. Não há garantia de sincronização imediata.
+- Não são importadas tarefas criadas diretamente no Microsoft To Do; exclusões, reabertura, descrição ou outras edições externas não alteram o planejamento. Ausência de uma tarefa externa mapeada não gera nova cópia automática. Cópias já exportadas de atividades excluídas/reatribuídas devem ser removidas manualmente pelo antigo responsável. Desconectar apaga a credencial local, não os registros no Microsoft, nem revoga o consentimento no tenant. Reconexão somente à mesma conta; troca de conta exige procedimento administrativo futuro.
+- Se uma criação externa tiver resultado ambíguo, a integração tenta encontrar a lista pelo nome ou tarefa por marcador opaco. Não repete POST incerto automaticamente; pode exigir recuperação manual. Uma lista compartilhada ou sem propriedade confirmada impede sincronização. Não compartilhe a lista; ela contém dados corporativos.
+
+### Arquitetura e validação
+
+- `lib/microsoft-todo-core.js`: OAuth 2.0 Authorization Code + PKCE S256, Graph, criptografia AES-256-GCM com contexto de usuário/conta, mapeamento de tarefas.
+- `lib/microsoft-todo-db.js`: estado OAuth expirável e de uso único ligado à sessão, conexão individual, mapeamento e trava temporária de sincronização. Tabelas `agenda_ms_oauth_state`, `agenda_ms_connections` e `agenda_ms_task_map`; sem tabela de fila ou logs detalhados nesta fase. Último lote e horário são registrados, sem retornar tokens ao navegador.
+- `lib/microsoft-todo-handler.js`: roteamento autenticado em `/api/tasks?microsoft=status|connect|callback|sync|disconnect`, com verificação de origem em POST, sem adicionar uma Vercel Function. `dist/microsoft-todo.js`: interface e preferência de sessão.
+- `test/microsoft-todo.test.js`: validação de configuração, PKCE, criptografia, URL Graph e conflitos. Teste PostgreSQL simula Microsoft Graph para validar conexão, replay, escopo individual e sincronização. A homologação com conta corporativa real e política de acesso condicional é obrigatória antes da ativação.
+
+Referências oficiais: [OAuth Authorization Code](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), [criar tarefas](https://learn.microsoft.com/en-us/graph/api/todotasklist-post-tasks?view=graph-rest-1.0), [atualizar tarefas](https://learn.microsoft.com/en-us/graph/api/todotask-update?view=graph-rest-1.0) e [listas To Do](https://learn.microsoft.com/en-us/graph/api/resources/todotasklist?view=graph-rest-1.0).

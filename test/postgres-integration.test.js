@@ -198,5 +198,40 @@ test('PostgreSQL: migrations, board authorization, atomic import, triggers and r
  assert.equal((await manage(adminUser,'DELETE',{id:1,confirm:true,confirmation:'Quadro'})).code,409);
  assert.ok((await sql.query('SELECT count(*)::int n FROM work_items WHERE board_id=1'))[0].n>0);
  await manage(adminUser,'PATCH',{id:1,mode:'restore'});
+
+ // Microsoft To Do: no real Microsoft account; simulate the provider with a private list.
+ const MS=require('../lib/microsoft-todo-db'),MC=require('../lib/microsoft-todo-core');
+ await MS.ensureMicrosoftTodo(sql);await MS.ensureMicrosoftTodo(sql);
+ const msConfig={key:Buffer.alloc(32,5),authority:'https://login.microsoftonline.com/test/oauth2/v2.0',client:'test',redirect:'https://example.com/api/tasks?microsoft=callback'};
+ await sql.query('UPDATE app_users SET can_edit=true WHERE id=2');
+ const own=(await sql.query("INSERT INTO tasks(assignee,assignee_id,title,area,due_date,status) VALUES('Editor',2,'Microsoft test','Planejamento','2026-11-27','todo') RETURNING id"))[0].id;
+ const other=(await sql.query("INSERT INTO tasks(assignee,assignee_id,title,area,due_date,status) VALUES('Leitor',3,'Other private task','Planejamento','2026-11-27','todo') RETURNING id"))[0].id;
+ const mockReq={headers:{cookie:'agenda_session=test-session'},query:{}},auth=await MS.startOAuth(sql,editorUser,mockReq,msConfig),state=new URL(auth).searchParams.get('state');
+ const tokenBefore=MC.token,graphBefore=MC.graph,collectionBefore=MC.collection;
+ const remotes=new Map();let list=null,postCount=0;
+ try{
+ MC.token=async()=>({access_token:'fake',refresh_token:'fake-refresh'});
+ MC.collection=async(access,path)=>path==='me/todo/lists'?(list?[list]:[]):[...remotes.values()];
+ MC.graph=async(access,path,method='GET',data)=>{
+ if(path.startsWith('me?'))return {id:'test-account',displayName:'Editor'};
+ if(path==='me/todo/lists'&&method==='POST'){list={id:'private-list',displayName:data.displayName,isOwner:true,isShared:false};return list}
+ if(path==='me/todo/lists/private-list')return list;
+ if(path==='me/todo/lists/private-list/tasks'&&method==='POST'){postCount++;const row={...data,id:'task-'+postCount};remotes.set(row.id,row);return row}
+ const id=path.split('/').at(-1),row=remotes.get(id);if(!row)throw new MC.ProviderError(404);
+ if(method==='PATCH'){Object.assign(row,data);return row}return row;
+ };
+ assert.equal(await MS.finishOAuth(sql,readerUser,{...mockReq,query:{state,code:'fake'}},msConfig),'invalid');
+ assert.equal(await MS.finishOAuth(sql,editorUser,{...mockReq,query:{state,code:'fake'}},msConfig),'connected');
+ assert.equal(await MS.finishOAuth(sql,editorUser,{...mockReq,query:{state,code:'fake'}},msConfig),'invalid');
+ const connected=await MS.status(sql,editorUser,msConfig);assert.equal(connected.connected,true);assert.equal(Object.hasOwn(connected,'refresh_cipher'),false);
+ assert.equal((await MS.status(sql,readerUser,msConfig)).connected,false);
+ const run=await MS.sync(sql,editorUser,msConfig);assert.equal(run.error,null);assert.ok(run.created>0);assert.ok(![...remotes.values()].some(t=>t.title==='Other private task'));
+ const mapping=(await sql.query('SELECT * FROM agenda_ms_task_map WHERE user_id=2 AND task_id=$1',[own]))[0];assert.ok(mapping.external_id);
+ remotes.get(mapping.external_id).status='completed';
+ const prior=postCount,second=await MS.sync(sql,editorUser,msConfig);assert.equal(second.error,null);assert.equal(second.completed,1);assert.equal(postCount,prior);
+ const finished=(await sql.query('SELECT status,completed_at FROM tasks WHERE id=$1',[own]))[0];assert.equal(finished.status,'concluída');assert.ok(finished.completed_at);
+ assert.equal(await MS.importCompletion(sql,2,{id:other,status:'todo'},{last_status:'todo'},{status:'completed'}),false);
+ list.isShared=true;assert.equal((await MS.sync(sql,editorUser,msConfig)).error,'list-not-private');
+ }finally{MC.token=tokenBefore;MC.graph=graphBefore;MC.collection=collectionBefore}
  }finally{try{await sql.query('ROLLBACK')}finally{await client.end()}}
 });
