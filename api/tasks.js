@@ -5,7 +5,9 @@ const {nextDate,normalizeSchedule,canManage,changesMetadata}=require('../lib/tas
 const {ensureCommunication}=require('./communication');
 const {ensureAreas,listAreas}=require('../lib/agenda-areas');
 const {reconcileRoutines}=require('../lib/task-recurrence-db');
+const {handleMicrosoftTodo}=require('../lib/microsoft-todo-handler');
 module.exports = async (req,res) => {
+  if(req.query?.microsoft!==undefined)return handleMicrosoftTodo(req,res);
   try {
     if(req.query?.worker==='recurrence'){if(req.method!=='GET'||!process.env.CRON_SECRET||req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return unauth(res);const sql=database();await bootstrap(sql);await ensureCommunication(sql);await ensureAreas(sql);return res.status(200).json(await reconcileRoutines(sql,{id:null,is_admin:true}));}
     const {sql,user}=await session(req); if(!user) return unauth(res);
